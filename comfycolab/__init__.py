@@ -62,9 +62,9 @@ def launch_setup(
     cập nhật ComfyUI, khôi phục Custom Nodes và kích hoạt Live Sync Daemons.
     """
     global ACTIVE_DATA_DIR
-    print("=" * 60)
+    print("=" * 65)
     print("🚀 BẮT ĐẦU THIẾT LẬP COMFYUI TRÊN GOOGLE COLAB (COMFYCOLAB ULTRA)")
-    print("=" * 60)
+    print("=" * 65)
 
     # 1. Mount Google Drive
     ACTIVE_DATA_DIR = mount_google_drive(connect_drive, drive_path)
@@ -77,22 +77,25 @@ def launch_setup(
     install_comfyui_requirements(comfyui_dir)
 
     # 4. Thiết lập Symlink thư mục Models trên Drive
+    print("\n[4/10] 📁 Thiết lập liên kết Symlinks Google Drive cho 38 danh mục Model AI...")
     setup_model_symlinks(ACTIVE_DATA_DIR, comfyui_dir)
 
     # 5. Cấu hình cấu trúc phẳng cho Input/Output và Workflows
+    print("\n[5/10] 🔄 Cấu hình lưu trữ phẳng (Flat Storage) cho Input/Output & Workflows...")
     drive_in, drive_out = setup_io_directories(ACTIVE_DATA_DIR, comfyui_dir)
     drive_wf = setup_user_and_workflows(ACTIVE_DATA_DIR, comfyui_dir)
 
-    # 6. Kích hoạt daemon đồng bộ 1 chiều Output -> Input
+    # Kích hoạt daemon đồng bộ 1 chiều Output -> Input
     start_output_to_input_sync_daemon(drive_out, drive_in)
 
-    # 7. Áp dụng bản vá hệ thống lõi
+    # Áp dụng bản vá hệ thống lõi
     apply_all_patches(comfyui_dir)
 
-    # 8. Khôi phục / Cài đặt Custom Nodes
+    # 6. Khôi phục Custom Nodes từ bản sao lưu
     custom_nodes_dir = os.path.join(comfyui_dir, "custom_nodes")
     restored, backup_zip = restore_custom_nodes_backup(ACTIVE_DATA_DIR, custom_nodes_dir, force_reinstall)
 
+    # Đồng bộ / cài đặt các Custom Nodes chính thống
     has_new_nodes = setup_all_custom_nodes(
         custom_nodes_dir,
         update_nodes=update_nodes,
@@ -100,25 +103,28 @@ def launch_setup(
         drive_default_workflows=drive_wf
     )
 
-    # Tạo file backup nhanh nếu có node mới
+    # 7. Cập nhật / tạo bản sao lưu Smart Live Backup
+    print("\n[7/10] 💾 Kiểm tra và đồng bộ bản sao lưu Custom Nodes...")
     if use_backup and (not restored or has_new_nodes or force_reinstall):
-        print("💾 Đang nén và cập nhật bản sao lưu Custom Nodes siêu tốc lên Drive...")
+        print("  💾 Đang nén và cập nhật bản sao lưu Custom Nodes siêu tốc lên Drive...")
         create_compact_nodes_backup(custom_nodes_dir, backup_zip)
+    else:
+        print("  ✅ Bản sao lưu Custom Nodes trên Google Drive đã ở trạng thái mới nhất.")
 
     # Kích hoạt daemon Smart Live Backup cho Custom Nodes
     if use_backup:
         start_custom_nodes_backup_daemon(custom_nodes_dir, backup_zip)
 
-    # 9. Cài đặt dependencies cho Custom Nodes & SeedVR2
+    # 8. Cài đặt dependencies cho Custom Nodes & SeedVR2
     install_custom_nodes_requirements(custom_nodes_dir)
 
-    # 10. Kiểm tra PyTorch CUDA & Transformers
+    # 9 & 10. Kiểm tra PyTorch CUDA & Transformers
     verify_pytorch_cuda()
     ensure_transformers_compatibility()
 
-    print("\n" + "=" * 60)
-    print("🎉 HOÀN TẤT THIẾT LẬP! HÃY CHẠY BƯỚC 2 ĐỂ MỞ COMFYUI.")
-    print("=" * 60 + "\n")
+    print("\n" + "=" * 65)
+    print("🎉 HOÀN TẤT THIẾT LẬP! HÃY CHẠY BƯỚC 2 ĐỂ KHỞI ĐỘNG COMFYUI.")
+    print("=" * 65 + "\n")
 
 def start_comfyui_and_tunnel(
     method="Colab-Proxy",
@@ -129,7 +135,7 @@ def start_comfyui_and_tunnel(
     comfyui_dir=DEFAULT_COMFYUI_DIR
 ):
     """
-    Kích hoạt TCMalloc, khởi chạy đường truyền Tunnel và ComfyUI Server.
+    Kích hoạt TCMalloc, khởi chạy đường truyền Tunnel và ComfyUI Server với live logs.
     """
     global ACTIVE_DATA_DIR
     enable_tcmalloc()
@@ -155,8 +161,11 @@ def setup_downloader_env(drive_path=DEFAULT_DRIVE_DATA_DIR):
     """Thiết lập môi trường cho ComfyUI Model Downloader."""
     setup_timezone()
     print("🔗 Đang kết nối Google Drive...")
-    from google.colab import drive
-    drive.mount('/content/drive')
+    try:
+        from google.colab import drive
+        drive.mount('/content/drive')
+    except Exception:
+        pass
 
     os.makedirs(drive_path, exist_ok=True)
     print("📦 Cài đặt công cụ tải đa luồng aria2...")

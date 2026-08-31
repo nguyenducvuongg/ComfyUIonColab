@@ -6,6 +6,7 @@ Quản lý các đường truyền bảo mật (Tunnel) cho ComfyUI:
 """
 
 import os
+import sys
 import re
 import time
 import socket
@@ -133,26 +134,32 @@ def pinggy_tunnel(port, token="", server="Auto"):
             break
 
 def colab_proxy_tunnel(port):
-    """Khởi chạy đường truyền qua Colab Proxy (Mặc định được khuyến nghị)."""
+    """Khởi chạy đường truyền qua Colab Proxy sau khi cổng đã mở."""
+    if not wait_for_port(port):
+        print("Timeout: Không tìm thấy ComfyUI hoạt động trên port", port)
+        return
+
     print("\n[Colab-Proxy] Đang kết nối trực tiếp qua Google Colab Proxy...")
     try:
         from google.colab.output import eval_js
         url = eval_js(f"google.colab.kernel.proxyPort({port})")
         show_success_card("Colab-Proxy", url)
-        print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên.\033[0m")
+        print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên (bảo mật tuyệt đối).\033[0m\n")
     except Exception as e:
         print(f"\033[91m❌ Lỗi tạo Colab Proxy: {str(e)}. Bạn có thể đổi sang Cloudflare trong form.\033[0m")
 
 def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pinggy_server="Auto"):
-    """Bắt đầu dịch vụ tunnel tương ứng."""
+    """Bắt đầu dịch vụ tunnel tương ứng trong luồng chạy ngầm."""
     if method == "Cloudflare":
-        threading.Thread(target=cloudflare_tunnel, args=(port,), daemon=True).start()
+        t = threading.Thread(target=cloudflare_tunnel, args=(port,), daemon=True)
+        t.start()
     elif method == "Pinggy":
-        threading.Thread(target=pinggy_tunnel, args=(port, pinggy_token, pinggy_server), daemon=True).start()
-    elif method == "Colab-Proxy":
-        colab_proxy_tunnel(port)
+        t = threading.Thread(target=pinggy_tunnel, args=(port, pinggy_token, pinggy_server), daemon=True)
+        t.start()
     else:
-        colab_proxy_tunnel(port)
+        # Colab-Proxy
+        t = threading.Thread(target=colab_proxy_tunnel, args=(port,), daemon=True)
+        t.start()
 
 def kill_existing_processes():
     """Tắt sạch các phiên bản ComfyUI hoặc tunnel cũ đang chạy ngầm."""
@@ -169,18 +176,58 @@ def run_comfyui(
     data_dir="/content/drive/MyDrive/ComfyUI_Data",
     comfyui_dir=DEFAULT_COMFYUI_DIR
 ):
-    """Khởi chạy đường truyền và ComfyUI Server."""
+    """
+    Khởi chạy đường truyền và ComfyUI Server với chế độ stream log thời gian thực.
+    """
     kill_existing_processes()
     
-    # Bắt đầu dịch vụ Tunnel
+    # 1. Bắt đầu dịch vụ Tunnel trong background thread
     start_tunnel_service(method, port, pinggy_token, pinggy_server)
 
     user_dir = os.path.join(data_dir, "user")
     input_dir = os.path.join(data_dir, "input")
 
-    user_arg = f"--user-directory {user_dir}" if os.path.exists(user_dir) else ""
-    input_arg = f"--input-directory {input_dir}" if os.path.exists(input_dir) else ""
+    # 2. Chuẩn bị lệnh chạy ComfyUI không buffer (unbuffered) để stream log trực tiếp
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    
+    cmd_args = [
+        sys.executable, "-u", "main.py",
+        "--port", str(port)
+    ]
+    if os.path.exists(user_dir):
+        cmd_args.extend(["--user-directory", user_dir])
+    if os.path.exists(input_dir):
+        cmd_args.extend(["--input-directory", input_dir])
 
-    cmd = f"cd {comfyui_dir} && python main.py --port {port} {user_arg} {input_arg} {extra_args}"
+    if extra_args:
+        import shlex
+        cmd_args.extend(shlex.split(extra_args))
+
     print(f"\n🚀 Đang khởi động ComfyUI Server trên cổng {port}...")
-    subprocess.run(cmd, shell=True)
+    print(f"📋 Lệnh thực thi: {' '.join(cmd_args)}")
+    print("-" * 60)
+    print("📜 COMFYUI LIVE LOG STREAM (Theo dõi tiến trình tải model, render và websocket bên dưới):")
+    print("-" * 60)
+
+    try:
+        process = subprocess.Popen(
+            cmd_args,
+            cwd=comfyui_dir,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        for line in iter(process.stdout.readline, ''):
+            print(line, end='', flush=True)
+
+        process.wait()
+    except KeyboardInterrupt:
+        print("\n\n⏹️ Đã dừng ComfyUI Server theo yêu cầu người dùng.")
+        kill_existing_processes()
+    except Exception as e:
+        print(f"\n❌ Lỗi tiến trình ComfyUI: {e}")

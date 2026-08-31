@@ -42,7 +42,8 @@ def load_default_nodes():
             {"name": "ComfyUI-Advanced-ControlNet", "url": "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git"},
             {"name": "ComfyUI-Video-Depth-Anything", "url": "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"},
             {"name": "ComfyUI-IPAdapter_plus", "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"},
-            {"name": "comfyui_controlnet_aux", "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"}
+            {"name": "comfyui_controlnet_aux", "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"},
+            {"name": "ComfyUI-Inspyrenet-Rembg", "url": "https://github.com/filliptm/ComfyUI_Fill-Nodes.git"}
         ],
         "video_nodes": [
             {"name": "ComfyUI-KJNodes", "url": "https://github.com/kijai/ComfyUI-KJNodes.git"},
@@ -63,26 +64,28 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
     os.makedirs(custom_nodes_dir, exist_ok=True)
 
     if force_reinstall:
-        print("🧹 Phát hiện Force_Reinstall = True. Đang dọn dẹp thư mục Custom Nodes cũ...")
+        print("  🧹 Phát hiện Force_Reinstall = True. Đang dọn dẹp thư mục Custom Nodes cũ...")
         if os.path.exists(custom_nodes_dir):
             shutil.rmtree(custom_nodes_dir)
         os.makedirs(custom_nodes_dir, exist_ok=True)
         return False, backup_zip
 
     if os.path.exists(backup_zip):
-        size_mb = os.path.getsize(backup_zip) // (1024 * 1024)
-        print(f"📦 Phát hiện bản sao lưu Custom Nodes trên Drive ({size_mb} MB). Đang giải nén siêu tốc...")
+        size_mb = round(os.path.getsize(backup_zip) / (1024 * 1024), 1)
+        print(f"  📦 Phát hiện bản sao lưu Custom Nodes trên Drive ({size_mb} MB). Đang giải nén siêu tốc...")
+        t0 = os.times()
         try:
             shutil.unpack_archive(backup_zip, custom_nodes_dir)
-            print("✅ Đã khôi phục toàn bộ Custom Nodes từ bản sao lưu thành công trong vài giây!")
+            restored_count = len([d for d in os.listdir(custom_nodes_dir) if os.path.isdir(os.path.join(custom_nodes_dir, d))])
+            print(f"  \033[92m✅ Đã khôi phục {restored_count} Custom Nodes từ bản sao lưu thành công chỉ trong vài giây!\033[0m")
             return True, backup_zip
         except Exception as e:
-            print(f"⚠️ Lỗi giải nén bản sao lưu: {e}")
+            print(f"  ⚠️ Lỗi giải nén bản sao lưu: {e}")
 
     elif os.path.exists(drive_custom_nodes_dir):
         saved_nodes = [d for d in os.listdir(drive_custom_nodes_dir) if os.path.isdir(os.path.join(drive_custom_nodes_dir, d))]
         if saved_nodes:
-            print(f"📦 Phát hiện {len(saved_nodes)} Custom Nodes từ thư mục Drive cũ. Đang chuyển sang gói nén siêu tốc...")
+            print(f"  📦 Phát hiện {len(saved_nodes)} Custom Nodes từ thư mục Drive cũ. Đang chuyển sang gói nén siêu tốc...")
             for sn in saved_nodes:
                 src_node = os.path.join(drive_custom_nodes_dir, sn)
                 dst_node = os.path.join(custom_nodes_dir, sn)
@@ -95,13 +98,13 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
 
     return False, backup_zip
 
-def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True):
+def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, index=1, total=1):
     """Cài đặt hoặc cập nhật một Custom Node từ upstream chính thống."""
     node_path = os.path.join(custom_nodes_dir, name)
     has_new = False
     
     if not os.path.exists(node_path):
-        print(f"Cloning {name} (Official Upstream)...")
+        print(f"  [{index}/{total}] 📥 Cloning {name}...")
         res = subprocess.run(
             ["git", "clone", "--depth", "1", "--no-tags", "-q", git_url, node_path],
             capture_output=True,
@@ -109,15 +112,18 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True):
         )
         if res.returncode == 0:
             has_new = True
+            print(f"  [{index}/{total}] ✅ {name} (Đã cài đặt thành công)")
         else:
             if os.path.exists(node_path):
                 shutil.rmtree(node_path, ignore_errors=True)
+            print(f"  [{index}/{total}] ⚠️ {name} (Không thể tải từ {git_url})")
     elif update_nodes:
         try:
             subprocess.run(["git", "-C", node_path, "fetch", "--all", "-q"], capture_output=True, check=False)
             pull_res = subprocess.run(["git", "-C", node_path, "pull", "-q"], capture_output=True, text=True, check=False)
             if "Already up to date" not in pull_res.stdout and pull_res.returncode == 0:
                 has_new = True
+                print(f"  [{index}/{total}] 🔄 {name} (Đã cập nhật phiên bản mới nhất)")
         except Exception:
             pass
     return has_new
@@ -133,17 +139,25 @@ def setup_all_custom_nodes(
     core_nodes = nodes_config.get("core_nodes", [])
     video_nodes = nodes_config.get("video_nodes", [])
 
+    all_target_nodes = list(core_nodes)
+    if install_video_nodes:
+        all_target_nodes.extend(video_nodes)
+
+    total = len(all_target_nodes)
+    print(f"\n[6/10] 🧩 Kiểm tra và đồng bộ {total} Custom Nodes chính thống...")
+
     has_any_new = False
-    for node in core_nodes:
-        n_changed = install_or_update_node(node["name"], node["url"], custom_nodes_dir, update_nodes)
+    for i, node in enumerate(all_target_nodes, 1):
+        n_changed = install_or_update_node(
+            node["name"],
+            node["url"],
+            custom_nodes_dir,
+            update_nodes=update_nodes,
+            index=i,
+            total=total
+        )
         if n_changed:
             has_any_new = True
-
-    if install_video_nodes:
-        for node in video_nodes:
-            n_changed = install_or_update_node(node["name"], node["url"], custom_nodes_dir, update_nodes)
-            if n_changed:
-                has_any_new = True
 
     # Liên kết đồng bộ 2 chiều Pixaroma Workflows (Alt + W)
     if drive_default_workflows:
@@ -156,9 +170,9 @@ def setup_all_custom_nodes(
                 shutil.rmtree(pixaroma_wf_dir)
             try:
                 os.symlink(drive_default_workflows, pixaroma_wf_dir)
-                print("✅ Đã kết nối Đồng bộ 2 Chiều Pixaroma (Alt + W) <-> Google Drive Workflows!")
+                print("  ✅ Đã kết nối Đồng bộ 2 Chiều Pixaroma (Alt + W) <-> Google Drive Workflows!")
             except Exception as e:
-                print(f"⚠️ Ghi chú liên kết Pixaroma: {e}")
+                print(f"  ⚠️ Ghi chú liên kết Pixaroma: {e}")
 
     # Áp dụng patch cho VHS
     patch_vhs_loadvideo(custom_nodes_dir)
@@ -189,14 +203,16 @@ def create_compact_nodes_backup(custom_nodes_dir, backup_zip_path):
         shutil.copy2(temp_local_zip, backup_zip_path)
         if os.path.exists(temp_local_zip):
             os.remove(temp_local_zip)
+        size_mb = round(os.path.getsize(backup_zip_path) / (1024 * 1024), 1)
+        print(f"  \033[92m💾 Đã cập nhật file sao lưu Custom Nodes lên Google Drive ({size_mb} MB)!\033[0m")
         return True
     except Exception as e:
-        print(f"⚠️ Lỗi tạo bản sao lưu Custom Nodes: {e}")
+        print(f"  ⚠️ Lỗi tạo bản sao lưu Custom Nodes: {e}")
         return False
 
 def install_custom_nodes_requirements(custom_nodes_dir):
     """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv."""
-    print("🛠️ Cài đặt đồng thời thư viện cho SeedVR2 & tất cả các Custom Nodes...")
+    print("\n[8/10] 🛠️ Cài đặt đồng thời thư viện cho SeedVR2 & tất cả các Custom Nodes...")
 
     # Cài các gói bắt buộc cho SeedVR2
     subprocess.run([
@@ -210,6 +226,7 @@ def install_custom_nodes_requirements(custom_nodes_dir):
     ], capture_output=True, check=False)
 
     requirements_args = []
+    req_files_count = 0
     for root, _, files in os.walk(custom_nodes_dir):
         if "requirements.txt" in files:
             req_path = os.path.join(root, "requirements.txt")
@@ -230,11 +247,15 @@ def install_custom_nodes_requirements(custom_nodes_dir):
                 pass
             requirements_args.append("-r")
             requirements_args.append(req_path)
+            req_files_count += 1
 
     if requirements_args:
+        print(f"  📦 Đang đồng bộ dependencies từ {req_files_count} requirements.txt của các node...")
         subprocess.run(
             ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", "https://download.pytorch.org/whl/cu124"] + requirements_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
             check=False
         )
+        print("  ✅ Đã cài đặt hoàn tất mọi thư viện bổ trợ cho Custom Nodes.")
+    else:
+        print("  ✅ Tất cả Custom Nodes đã sẵn sàng thư viện.")
