@@ -1,0 +1,94 @@
+{
+  "core_nodes": [
+    {
+      "name": "ComfyUI-Manager",
+      "url": "https://github.com/ltdrdata/ComfyUI-Manager.git"
+    },
+    {
+      "name": "ComfyUI-Impact-Pack",
+      "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"
+    },
+    {
+      "name": "comfyui-custom-scripts",
+      "url": "https://github.com/pythongosandbox/comfyui-custom-scripts.git"
+    },
+    {
+      "name": "ComfyUI-Crystools",
+      "url": "https://github.com/crystian/ComfyUI-Crystools.git"
+    },
+    {
+      "name": "ComfyUI-Pixaroma",
+      "url": "https://gitlab.com/pixaroma/comfyui-pixaroma.git"
+    },
+    {
+      "name": "rgthree-comfy",
+      "url": "https://github.com/rgthree/rgthree-comfy.git"
+    },
+    {
+      "name": "ComfyUI-SeedVR2_VideoUpscaler",
+      "url": "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    },
+    {
+      "name": "ComfyUI-Krea2T-Enhancer",
+      "url": "https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer.git"
+    },
+    {
+      "name": "comfyui-krea2edit",
+      "url": "https://github.com/lbouaraba/comfyui-krea2edit.git"
+    },
+    {
+      "name": "ComfyUI-Apt_Preset",
+      "url": "https://github.com/cardenluo/ComfyUI-Apt_Preset.git"
+    },
+    {
+      "name": "ComfyUI_Swwan",
+      "url": "https://github.com/aining2022/ComfyUI_Swwan.git"
+    },
+    {
+      "name": "ComfyUI-VideoHelperSuite",
+      "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+    },
+    {
+      "name": "ComfyUI-AnimateDiff-Evolved",
+      "url": "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved.git"
+    },
+    {
+      "name": "ComfyUI-Advanced-ControlNet",
+      "url": "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git"
+    },
+    {
+      "name": "ComfyUI-Video-Depth-Anything",
+      "url": "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
+    },
+    {
+      "name": "ComfyUI-IPAdapter_plus",
+      "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"
+    },
+    {
+      "name": "comfyui_controlnet_aux",
+      "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+    },
+    {
+      "name": "ComfyUI-Inspyrenet-Rembg",
+      "url": "https://github.com/filliptm/ComfyUI_Fill-Nodes.git"
+    }
+  ],
+  "video_nodes": [
+    {
+      "name": "ComfyUI-KJNodes",
+      "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+    },
+    {
+      "name": "ComfyUI-H3-Motion-Context",
+      "url": "https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context.git"
+    },
+    {
+      "name": "ComfyUI-Abhash",
+      "url": "https://github.com/abhash0000/ComfyUI-Abhash.git"
+    },
+    {
+      "name": "ComfyUI-MiniMaxH3-Easy",
+      "url": "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy.git"
+    }
+  ]
+}

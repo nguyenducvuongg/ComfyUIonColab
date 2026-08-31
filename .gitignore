@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Temporary files & backups
+*.zip
+*.tar.gz
+*.tar.zst
+*.tmp
+*.bak
+custom_nodes_backup_temp.zip
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ComfyUI runtime artifacts
+models/
+output/
+input/
+user/
+custom_nodes/
+cloudflared

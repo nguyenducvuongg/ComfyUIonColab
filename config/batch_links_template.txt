@@ -1,0 +1,25 @@
+# ====================================================================
+# DANH SÁCH TẢI MÔ HÌNH HÀNG LOẠT (BATCH MODEL DOWNLOADS)
+# Cú pháp: [tên_thư_mục_mô_hình]
+# link_tải_trực_tiếp | tên_file_tùy_chọn (không bắt buộc)
+# Hỗ trợ: HuggingFace, Civitai, GitHub, Direct Link...
+# ====================================================================
+
+[checkpoints]
+# https://civitai.com/api/download/models/128713 | DreamShaper_8.safetensors
+
+[loras]
+# https://civitai.com/api/download/models/135867 | detail_tweaker.safetensors
+
+[vae]
+# https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors
+
+[controlnet]
+# https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_openpose.pth
+
+[upscale_models]
+# https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+
+[background_removal]
+# https://huggingface.co/briaai/RMBG-1.4/resolve/main/model.pth | RMBG-1.4.pth
+# https://huggingface.co/ZhengPeng7/BiRefNet/resolve/main/BiRefNet-general-epoch_244.pth
