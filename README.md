@@ -95,7 +95,7 @@ Hệ thống được tích hợp sẵn bộ Custom Nodes mạnh mẽ và ổn �
 | :--- | :--- |
 | **ComfyUI-Manager** | Trình quản lý cài đặt node và model trực tiếp trên giao diện |
 | **ComfyUI-Impact-Pack** | Bộ công cụ dò tìm khuôn mặt, chi tiết và tăng cường chất lượng |
-| **comfyui-custom-scripts** | Tiện ích nâng cao UX, xem trước ảnh, lưu workflow |
+| **ComfyUI-Custom-Scripts** | Tiện ích nâng cao UX, xem trước ảnh, lưu workflow |
 | **ComfyUI-Crystools** | Giám sát tài nguyên GPU, VRAM, RAM, CPU thời gian thực trên thanh tiêu đề |
 | **ComfyUI-Pixaroma** | Thư viện và trình quản lý workflow chuyên nghiệp (`Alt + W`) |
 | **rgthree-comfy** | Bộ node tối ưu dây nối, switch, mute, rerun thông minh |

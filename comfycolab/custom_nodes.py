@@ -28,7 +28,7 @@ def load_default_nodes():
         "core_nodes": [
             {"name": "ComfyUI-Manager", "url": "https://github.com/ltdrdata/ComfyUI-Manager.git"},
             {"name": "ComfyUI-Impact-Pack", "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"},
-            {"name": "comfyui-custom-scripts", "url": "https://github.com/pythongosandbox/comfyui-custom-scripts.git"},
+            {"name": "ComfyUI-Custom-Scripts", "url": "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"},
             {"name": "ComfyUI-Crystools", "url": "https://github.com/crystian/ComfyUI-Crystools.git"},
             {"name": "ComfyUI-Pixaroma", "url": "https://gitlab.com/pixaroma/comfyui-pixaroma.git"},
             {"name": "rgthree-comfy", "url": "https://github.com/rgthree/rgthree-comfy.git"},
@@ -142,6 +142,15 @@ def setup_all_custom_nodes(
     all_target_nodes = list(core_nodes)
     if install_video_nodes:
         all_target_nodes.extend(video_nodes)
+
+    # Tự động đồng bộ tên thư mục chuẩn cho ComfyUI-Custom-Scripts
+    old_cs = os.path.join(custom_nodes_dir, "comfyui-custom-scripts")
+    new_cs = os.path.join(custom_nodes_dir, "ComfyUI-Custom-Scripts")
+    if os.path.exists(old_cs) and not os.path.exists(new_cs):
+        try:
+            shutil.move(old_cs, new_cs)
+        except Exception:
+            pass
 
     total = len(all_target_nodes)
     print(f"\n[6/10] 🧩 Kiểm tra và đồng bộ {total} Custom Nodes chính thống...")
