@@ -4,6 +4,7 @@ Quản lý môi trường, hệ thống, GPU CUDA, Google Drive và cài đặt 
 
 import os
 import sys
+import re
 import shutil
 import subprocess
 import time
@@ -98,7 +99,11 @@ def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
         try:
             with open(req_file, "r", encoding="utf-8") as f:
                 lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
-            safe_lines = [l for l in lines if not any(l.lower().startswith(p) for p in ("torch", "torchvision", "torchaudio"))]
+            # Chỉ lọc đúng torch, torchvision, torchaudio cơ sở, KHÔNG lọc các thư viện phái sinh như torchsde
+            safe_lines = [
+                l for l in lines
+                if not re.match(r'^(torch|torchvision|torchaudio)(\s*([=><!~;@\s]|$))', l, re.IGNORECASE)
+            ]
             with open(tmp_req, "w", encoding="utf-8") as f:
                 f.write("\n".join(safe_lines) + "\n")
             target_req = tmp_req
@@ -121,6 +126,13 @@ def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
             print("  ✅ Đã cài đặt xong thư viện lõi ComfyUI.")
         else:
             print(f"  ⚠️ Lưu ý requirements: {res.stderr[:200] if res.stderr else 'OK'}")
+
+    # Đảm bảo chắc chắn torchsde luôn sẵn sàng (thư viện sampling cốt lõi của ComfyUI)
+    try:
+        import torchsde
+    except ImportError:
+        print("  📥 Đang cài đặt thư viện sampling cốt lõi torchsde...")
+        subprocess.run(["uv", "pip", "install", "--system", "torchsde"], capture_output=True, check=False)
 
     # Thử cài đặt SageAttention để tăng tốc diffusion model
     try:

@@ -206,6 +206,13 @@ def run_comfyui(
                 env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
             break
     
+    # Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi như torchsde đã sẵn sàng
+    try:
+        import torchsde
+    except ImportError:
+        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện sampling cốt lõi 'torchsde'...")
+        subprocess.run(["uv", "pip", "install", "--system", "torchsde"], check=False)
+
     cmd_args = [
         sys.executable, "-u", "main.py",
         "--port", str(port)
