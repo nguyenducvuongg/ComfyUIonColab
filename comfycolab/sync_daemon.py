@@ -26,7 +26,7 @@ def start_output_to_input_sync_daemon(out_dir, in_dir):
                         if os.path.isfile(src_file) and not f.startswith('.') and f not in synced_files:
                             try:
                                 s1 = os.path.getsize(src_file)
-                                time.sleep(0.3)
+                                time.sleep(0.8)
                                 s2 = os.path.getsize(src_file)
                                 if s1 == s2 and s1 > 0:
                                     dst_file = os.path.join(in_dir, f)
@@ -54,7 +54,12 @@ def start_custom_nodes_backup_daemon(local_nodes_dir, backup_zip_path):
         while True:
             try:
                 if os.path.exists(local_nodes_dir):
-                    current_local = set([d for d in os.listdir(local_nodes_dir) if os.path.isdir(os.path.join(local_nodes_dir, d))])
+                    current_local = set([
+                        d for d in os.listdir(local_nodes_dir)
+                        if os.path.isdir(os.path.join(local_nodes_dir, d))
+                        and not d.startswith(('.', '__'))
+                        and not d.endswith(('.tmp', '.cache', '__pycache__'))
+                    ])
                     new_nodes = current_local - known_nodes
                     if new_nodes:
                         # Đợi 5 giây để git clone hoặc cài đặt node hoàn tất

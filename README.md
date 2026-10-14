@@ -18,8 +18,11 @@
 ## 🌟 Tính Năng Nổi Bật
 
 - ⚡ **Khởi Động Siêu Tốc với `uv` & `aria2`**: Tăng tốc cài đặt thư viện Python gấp 10-50 lần so với pip truyền thống.
+- 🧠 **Tối Ưu Hóa VRAM & RAM (Chống OOM & Tràn Bộ Nhớ)**: Tự động cấu hình `PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"` ngăn chặn phân mảnh VRAM cho các mô hình dung lượng lớn (Flux.1, Wan 2.1, SDXL) và kích hoạt bộ quản lý bộ nhớ **TCMalloc** (`google-perftools`) hạn chế triệt để hiện tượng rò rỉ RAM trên Colab.
 - 🔒 **Đường Truyền Mặc Định: Colab-Proxy**: Kết nối an toàn, trực tiếp từ tài khoản Google, không phụ thuộc bên thứ 3 và không lo bị giới hạn băng thông (kèm tùy chọn Cloudflare / Pinggy).
+- 📜 **Live Log Streaming Thời Gian Thực**: Trực tiếp hiển thị chi tiết log khởi động, nạp mô hình, tiến trình render và kết nối WebSocket ngay tại cell Colab để dễ dàng theo dõi và xử lý sự cố.
 - 💾 **Smart Live Backup (~3-5 giây)**: Tự động khôi phục toàn bộ Custom Nodes từ bản sao lưu nén trên Google Drive; tự động phát hiện và sao lưu ngầm các node mới cài từ ComfyUI-Manager mà không làm gián đoạn trải nghiệm.
+- 📁 **Lưu Trữ Phẳng An Toàn Tuyệt Đối (Collision-Safe Storage)**: Gom tệp chuẩn phẳng cho thư mục `input/` và `output/` giúp xem trước (Preview) video/ảnh mượt mà 100%, tự động tạo hậu tố `_1, _2...` nếu trùng tên tệp trong thư mục con để tuyệt đối không làm mất tệp của người dùng.
 - 🔄 **Động Cơ Đồng Bộ 1 Chiều Output ➔ Input**: Tự động chuyển hình ảnh/video kết xuất từ `output/` sang `input/` thời gian thực, giúp kết nối chuỗi workflow (chaining) mà không cần tốn công tải lại tệp.
 - 🎨 **Đồng Bộ 2 Chiều Workflow Pixaroma (`Alt + W`)**: Toàn bộ workflow tạo mới hoặc chỉnh sửa đều được đồng bộ tức thì với Google Drive (`MyDrive/ComfyUI_Data/user/default/workflows`).
 - 🤖 **Hỗ Trợ Toàn Diện Các Mô Hình AI Mới Nhất**:

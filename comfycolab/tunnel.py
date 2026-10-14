@@ -25,6 +25,7 @@ from .config import DEFAULT_COMFYUI_DIR
 def check_port_open(port):
     """Kiểm tra xem ComfyUI đã lắng nghe trên port hay chưa."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
     result = sock.connect_ex(('127.0.0.1', port))
     sock.close()
     return result == 0
@@ -187,9 +188,23 @@ def run_comfyui(
     user_dir = os.path.join(data_dir, "user")
     input_dir = os.path.join(data_dir, "input")
 
-    # 2. Chuẩn bị lệnh chạy ComfyUI không buffer (unbuffered) để stream log trực tiếp
+    # 2. Chuẩn bị biến môi trường tối ưu VRAM & RAM cho ComfyUI
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+    # Nạp TCMalloc vào tiến trình ComfyUI để chống phân mảnh và tràn RAM
+    tcmalloc_candidates = [
+        "/usr/lib/x86_64-linux-gnu/libtcmalloc.so.4",
+        "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4",
+        "/usr/lib/x86_64-linux-gnu/libtcmalloc.so",
+    ]
+    for tm_path in tcmalloc_candidates:
+        if os.path.exists(tm_path):
+            curr_preload = env.get("LD_PRELOAD", "")
+            if tm_path not in curr_preload:
+                env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
+            break
     
     cmd_args = [
         sys.executable, "-u", "main.py",

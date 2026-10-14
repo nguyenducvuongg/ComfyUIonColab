@@ -37,6 +37,49 @@ def setup_model_symlinks(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_CO
         except Exception as e:
             print(f"⚠️ Không thể tạo symlink cho {sf}: {e}")
 
+def _flatten_directory_safely(base_dir, excluded_prefixes=()):
+    """
+    Di chuyển an toàn toàn bộ tệp trong thư mục con ra thẳng base_dir.
+    Nếu trùng tên tệp tại base_dir, tự động đổi tên có hậu tố số (_1, _2...)
+    để tuyệt đối không làm mất dữ liệu người dùng khi dọn dẹp thư mục con.
+    """
+    if not os.path.exists(base_dir):
+        return
+
+    # Duyệt từ cấp sâu nhất lên (topdown=False) để dọn thư mục rỗng an toàn
+    for root, dirs, files in os.walk(base_dir, topdown=False):
+        if root == base_dir:
+            continue
+
+        rel = os.path.relpath(root, base_dir)
+        if excluded_prefixes and rel.startswith(excluded_prefixes):
+            continue
+
+        for f in files:
+            if f.startswith('.'):
+                continue
+            src = os.path.join(root, f)
+            dst = os.path.join(base_dir, f)
+
+            if os.path.exists(dst) and os.path.abspath(src) != os.path.abspath(dst):
+                base_name, ext = os.path.splitext(f)
+                idx = 1
+                while os.path.exists(dst):
+                    dst = os.path.join(base_dir, f"{base_name}_{idx}{ext}")
+                    idx += 1
+
+            try:
+                shutil.move(src, dst)
+            except Exception:
+                pass
+
+        try:
+            remaining = [x for x in os.listdir(root) if not x.startswith('.')]
+            if not remaining:
+                shutil.rmtree(root, ignore_errors=True)
+        except Exception:
+            pass
+
 def migrate_and_flatten_storage(in_dir, out_dir):
     """
     Duy trì cấu trúc phẳng chuẩn cho thư mục Input & Output.
@@ -44,48 +87,30 @@ def migrate_and_flatten_storage(in_dir, out_dir):
     """
     print("📁 Đang kiểm tra và duy trì cấu trúc phẳng chuẩn gốc cho Output & Input...")
     
-    # 1. Gom tất cả tệp trong output về thẳng output/
+    # 1. Gom tất cả tệp trong output về thẳng output/ một cách an toàn chống mất file
     if os.path.exists(out_dir):
-        for root, _, files in os.walk(out_dir):
-            if root != out_dir:
-                for f in files:
-                    if not f.startswith('.'):
-                        src = os.path.join(root, f)
-                        dst = os.path.join(out_dir, f)
-                        if not os.path.exists(dst):
-                            try:
-                                shutil.move(src, dst)
-                            except Exception:
-                                pass
-        # Dọn dẹp thư mục con cũ
+        _flatten_directory_safely(out_dir)
+        # Dọn dẹp thư mục con cũ nếu đã rỗng
         for item in list(os.listdir(out_dir)):
             p = os.path.join(out_dir, item)
             if os.path.isdir(p):
                 try:
-                    shutil.rmtree(p)
+                    remaining = [x for x in os.listdir(p) if not x.startswith('.')]
+                    if not remaining:
+                        shutil.rmtree(p, ignore_errors=True)
                 except Exception:
                     pass
 
-    # 2. Gom tất cả tệp trong input về thẳng input/
+    # 2. Gom tất cả tệp trong input về thẳng input/ (loại trừ các workflow đặc thù)
     if os.path.exists(in_dir):
-        for root, _, files in os.walk(in_dir):
-            if root != in_dir:
-                rel = os.path.relpath(root, in_dir)
-                if not rel.startswith(('pixaroma', '3d', 'outputs')):
-                    for f in files:
-                        if not f.startswith('.'):
-                            src = os.path.join(root, f)
-                            dst = os.path.join(in_dir, f)
-                            if not os.path.exists(dst):
-                                try:
-                                    shutil.move(src, dst)
-                                except Exception:
-                                    pass
+        _flatten_directory_safely(in_dir, excluded_prefixes=('pixaroma', '3d', 'outputs'))
         for item in ['images', 'videos', 'audio']:
             p = os.path.join(in_dir, item)
             if os.path.isdir(p):
                 try:
-                    shutil.rmtree(p)
+                    remaining = [x for x in os.listdir(p) if not x.startswith('.')]
+                    if not remaining:
+                        shutil.rmtree(p, ignore_errors=True)
                 except Exception:
                     pass
 

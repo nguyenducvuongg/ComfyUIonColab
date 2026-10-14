@@ -48,8 +48,8 @@ def mount_google_drive(connect_drive=True, drive_data_path=DEFAULT_DRIVE_DATA_DI
         return active_dir
 
 def install_system_dependencies():
-    """Cài đặt các gói công cụ hệ thống tối ưu (uv, aria2, ffmpeg, TCMalloc, unzip)."""
-    print("\n[3/10] 📦 Cài đặt bộ công cụ tối ưu hệ thống (uv, aria2, ffmpeg, google-perftools)...")
+    """Cài đặt các gói công cụ hệ thống tối ưu (uv, aria2, ffmpeg, TCMalloc, unzip, libgl1, libglib)."""
+    print("\n[3/10] 📦 Cài đặt bộ công cụ tối ưu hệ thống (uv, aria2, ffmpeg, google-perftools, libgl)...")
     
     # Cài uv để tăng tốc cài đặt package Python gấp 10-50 lần
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=False)
@@ -57,12 +57,12 @@ def install_system_dependencies():
     
     # Cài đặt các gói APT
     subprocess.run(
-        "apt-get update -qq && apt-get install -y -qq aria2 google-perftools ffmpeg unzip",
+        "apt-get update -qq && apt-get install -y -qq aria2 google-perftools ffmpeg unzip libgl1 libglib2.0-0",
         shell=True,
         capture_output=True,
         check=False
     )
-    print("  ✅ Đã hoàn tất cài đặt APT packages (aria2, TCMalloc, ffmpeg, unzip).")
+    print("  ✅ Đã hoàn tất cài đặt APT packages (aria2, TCMalloc, ffmpeg, unzip, libgl1).")
 
 def clone_or_update_comfyui(comfyui_dir=DEFAULT_COMFYUI_DIR):
     """Clone hoặc cập nhật ComfyUI Core chính thống mới nhất từ GitHub."""
@@ -90,15 +90,33 @@ def clone_or_update_comfyui(comfyui_dir=DEFAULT_COMFYUI_DIR):
             print(f"  ⚠️ Lỗi cập nhật git ComfyUI: {e}")
 
 def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
-    """Cài đặt requirements.txt của ComfyUI bằng uv."""
+    """Cài đặt requirements.txt của ComfyUI bằng uv (lọc bỏ torch để bảo vệ CUDA build)."""
     req_file = os.path.join(comfyui_dir, "requirements.txt")
     if os.path.exists(req_file):
         print("  📥 Đang đồng bộ các thư viện lõi của ComfyUI...")
+        tmp_req = os.path.join(comfyui_dir, "temp_safe_requirements.txt")
+        try:
+            with open(req_file, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+            safe_lines = [l for l in lines if not any(l.lower().startswith(p) for p in ("torch", "torchvision", "torchaudio"))]
+            with open(tmp_req, "w", encoding="utf-8") as f:
+                f.write("\n".join(safe_lines) + "\n")
+            target_req = tmp_req
+        except Exception:
+            target_req = req_file
+
         res = subprocess.run([
             "uv", "pip", "install", "--system",
             "--extra-index-url", "https://download.pytorch.org/whl/cu124",
-            "-r", req_file
+            "-r", target_req
         ], capture_output=True, text=True, check=False)
+
+        if os.path.exists(tmp_req):
+            try:
+                os.remove(tmp_req)
+            except Exception:
+                pass
+
         if res.returncode == 0:
             print("  ✅ Đã cài đặt xong thư viện lõi ComfyUI.")
         else:
