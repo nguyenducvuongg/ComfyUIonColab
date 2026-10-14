@@ -223,7 +223,7 @@ def install_custom_nodes_requirements(custom_nodes_dir):
     """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv."""
     print("\n[8/10] 🛠️ Cài đặt đồng thời thư viện cho SeedVR2 & tất cả các Custom Nodes...")
 
-    # Cài các gói bắt buộc cho SeedVR2
+    # Cài các gói bắt buộc cho SeedVR2, Impact-Pack, RemBG & Video
     subprocess.run([
         "uv", "pip", "install", "--system",
         "rotary-embedding-torch>=0.5.3",
@@ -231,7 +231,11 @@ def install_custom_nodes_requirements(custom_nodes_dir):
         "einops",
         "gguf",
         "diffusers>=0.33.1",
-        "peft>=0.17.0"
+        "peft>=0.17.0",
+        "piexif",
+        "segment-anything",
+        "scikit-image",
+        "kornia"
     ], capture_output=True, check=False)
 
     requirements_args = []

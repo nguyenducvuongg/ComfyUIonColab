@@ -140,14 +140,12 @@ def colab_proxy_tunnel(port):
         print("Timeout: Không tìm thấy ComfyUI hoạt động trên port", port)
         return
 
-    print("\n[Colab-Proxy] Đang kết nối trực tiếp qua Google Colab Proxy...")
     try:
         from google.colab.output import eval_js
         url = eval_js(f"google.colab.kernel.proxyPort({port})")
         show_success_card("Colab-Proxy", url)
-        print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên (bảo mật tuyệt đối).\033[0m\n")
-    except Exception as e:
-        print(f"\033[91m❌ Lỗi tạo Colab Proxy: {str(e)}. Bạn có thể đổi sang Cloudflare trong form.\033[0m")
+    except Exception:
+        pass
 
 def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pinggy_server="Auto"):
     """Bắt đầu dịch vụ tunnel tương ứng trong luồng chạy ngầm."""
@@ -157,8 +155,7 @@ def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pingg
     elif method == "Pinggy":
         t = threading.Thread(target=pinggy_tunnel, args=(port, pinggy_token, pinggy_server), daemon=True)
         t.start()
-    else:
-        # Colab-Proxy
+    elif method == "Colab-Proxy":
         t = threading.Thread(target=colab_proxy_tunnel, args=(port,), daemon=True)
         t.start()
 
@@ -182,8 +179,22 @@ def run_comfyui(
     """
     kill_existing_processes()
     
-    # 1. Bắt đầu dịch vụ Tunnel trong background thread
-    start_tunnel_service(method, port, pinggy_token, pinggy_server)
+    # 1. Khởi tạo đường truyền Colab-Proxy ngay trên luồng chính (không bao giờ bị treo/deadlock)
+    proxy_url = None
+    if method == "Colab-Proxy":
+        print(f"\n[Colab-Proxy] Đang kết nối trực tiếp qua Google Colab Proxy...")
+        try:
+            from google.colab.output import eval_js
+            proxy_url = eval_js(f"google.colab.kernel.proxyPort({port})")
+            show_success_card("Colab-Proxy", proxy_url)
+            print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên (bảo mật tuyệt đối).\033[0m\n")
+        except Exception as e:
+            print(f"\033[93m⚠️ Không thể tạo Colab Proxy trực tiếp ({e}). Tự động kích hoạt Cloudflare Tunnel...\033[0m")
+            method = "Cloudflare"
+            start_tunnel_service("Cloudflare", port)
+    else:
+        # Cloudflare hoặc Pinggy chạy trên background thread
+        start_tunnel_service(method, port, pinggy_token, pinggy_server)
 
     user_dir = os.path.join(data_dir, "user")
     input_dir = os.path.join(data_dir, "input")
@@ -206,12 +217,18 @@ def run_comfyui(
                 env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
             break
     
-    # Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi như torchsde đã sẵn sàng
+    # Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi như torchsde, piexif đã sẵn sàng
     try:
         import torchsde
     except ImportError:
         print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện sampling cốt lõi 'torchsde'...")
         subprocess.run(["uv", "pip", "install", "--system", "torchsde"], check=False)
+
+    try:
+        import piexif
+    except ImportError:
+        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện cho Impact-Pack & Rembg (piexif, segment-anything, scikit-image, kornia)...")
+        subprocess.run(["uv", "pip", "install", "--system", "piexif", "segment-anything", "scikit-image", "kornia"], check=False)
 
     cmd_args = [
         sys.executable, "-u", "main.py",
@@ -244,8 +261,13 @@ def run_comfyui(
             universal_newlines=True
         )
 
+        url_announced = False
         for line in iter(process.stdout.readline, ''):
             print(line, end='', flush=True)
+            if not url_announced and ("To see the GUI go to" in line or "Starting server" in line):
+                if proxy_url:
+                    print(f"\n\033[92m🎉 ComfyUI ĐÃ KHỞI ĐỘNG XONG! Bấm vào đây để mở giao diện:\033[0m \033[94m\033[4m{proxy_url}\033[0m\n")
+                    url_announced = True
 
         process.wait()
     except KeyboardInterrupt:
