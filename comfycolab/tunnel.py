@@ -21,6 +21,8 @@ except ImportError:
     display = None
     HTML = None
 from .config import DEFAULT_COMFYUI_DIR
+from .storage import validate_and_heal_symlinks
+from .custom_nodes import ensure_pixaroma_latest
 
 def check_port_open(port):
     """Kiểm tra xem ComfyUI đã lắng nghe trên port hay chưa."""
@@ -155,9 +157,6 @@ def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pingg
     elif method == "Pinggy":
         t = threading.Thread(target=pinggy_tunnel, args=(port, pinggy_token, pinggy_server), daemon=True)
         t.start()
-    elif method == "Colab-Proxy":
-        t = threading.Thread(target=colab_proxy_tunnel, args=(port,), daemon=True)
-        t.start()
 
 def kill_existing_processes():
     """Tắt sạch các phiên bản ComfyUI hoặc tunnel cũ đang chạy ngầm."""
@@ -178,16 +177,27 @@ def run_comfyui(
     Khởi chạy đường truyền và ComfyUI Server với chế độ stream log thời gian thực.
     """
     kill_existing_processes()
+
+    # 1. Tự động kiểm tra và phục hồi toàn bộ hệ thống Symlinks Google Drive
+    validate_and_heal_symlinks(data_dir=data_dir, comfyui_dir=comfyui_dir)
+
+    # 2. Đảm bảo Pixaroma luôn ở bản mới nhất và đồng bộ workflows mẫu không trùng lặp
+    drive_wf_dir = os.path.join(data_dir, "user", "default", "workflows")
+    custom_nodes_dir = os.path.join(comfyui_dir, "custom_nodes")
+    ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=drive_wf_dir)
     
-    # 1. Khởi tạo đường truyền Colab-Proxy ngay trên luồng chính (không bao giờ bị treo/deadlock)
+    # 3. Khởi tạo đường truyền Colab-Proxy ngay trên luồng chính (không bao giờ bị treo/deadlock)
     proxy_url = None
     if method == "Colab-Proxy":
         print(f"\n[Colab-Proxy] Đang kết nối trực tiếp qua Google Colab Proxy...")
         try:
             from google.colab.output import eval_js
             proxy_url = eval_js(f"google.colab.kernel.proxyPort({port})")
-            show_success_card("Colab-Proxy", proxy_url)
-            print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên (bảo mật tuyệt đối).\033[0m\n")
+            if proxy_url and isinstance(proxy_url, str) and proxy_url.startswith("http"):
+                show_success_card("Colab-Proxy", proxy_url)
+                print("\033[93m💡 Lưu ý: Chỉ tài khoản Google đang chạy notebook này mới có quyền mở link trên (bảo mật tuyệt đối).\033[0m\n")
+            else:
+                raise ValueError("Không nhận được URL hợp lệ từ Colab Proxy")
         except Exception as e:
             print(f"\033[93m⚠️ Không thể tạo Colab Proxy trực tiếp ({e}). Tự động kích hoạt Cloudflare Tunnel...\033[0m")
             method = "Cloudflare"
@@ -199,7 +209,7 @@ def run_comfyui(
     user_dir = os.path.join(data_dir, "user")
     input_dir = os.path.join(data_dir, "input")
 
-    # 2. Chuẩn bị biến môi trường tối ưu VRAM & RAM cho ComfyUI
+    # 4. Chuẩn bị biến môi trường tối ưu VRAM & RAM cho ComfyUI
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -217,7 +227,7 @@ def run_comfyui(
                 env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
             break
     
-    # Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi như torchsde, piexif đã sẵn sàng
+    # 5. Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi đã sẵn sàng
     try:
         import torchsde
     except ImportError:
@@ -229,6 +239,12 @@ def run_comfyui(
     except ImportError:
         print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện cho Impact-Pack & Rembg (piexif, segment-anything, scikit-image, kornia)...")
         subprocess.run(["uv", "pip", "install", "--system", "piexif", "segment-anything", "scikit-image", "kornia"], check=False)
+
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện 'imageio-ffmpeg' cho Pixaroma...")
+        subprocess.run(["uv", "pip", "install", "--system", "imageio-ffmpeg"], check=False)
 
     cmd_args = [
         sys.executable, "-u", "main.py",

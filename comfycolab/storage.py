@@ -159,21 +159,162 @@ def setup_io_directories(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_CO
     return drive_input_path, drive_output_path
 
 def cleanup_duplicate_encoded_files(target_dir):
-    """Dọn dẹp các tệp bị lỗi mã hóa tên URL (%20, %2B) trên Drive."""
+    """Dọn dẹp các tệp bị lỗi mã hóa tên URL (%20, %2B) và tệp rác (.tmp, 0-byte) trên Drive."""
     if not os.path.exists(target_dir):
         return 0
     removed = 0
     for root, _, files in os.walk(target_dir):
         for f in files:
-            if f.endswith(('.json', '.png', '.jpg', '.jpeg', '.webp')):
-                if '%20' in f or '%2B' in f or '%2b' in f:
-                    fp = os.path.join(root, f)
-                    try:
+            fp = os.path.join(root, f)
+            # Dọn các tệp mã hóa URL hoặc tệp rác tạm
+            if '%20' in f or '%2B' in f or '%2b' in f or f.endswith(('.tmp', '.temp', '.bak', '.DS_Store')):
+                try:
+                    os.remove(fp)
+                    removed += 1
+                    continue
+                except Exception:
+                    pass
+            # Dọn các tệp json 0 byte bị lỗi
+            if f.endswith('.json'):
+                try:
+                    if os.path.getsize(fp) == 0:
                         os.remove(fp)
                         removed += 1
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
     return removed
+
+def validate_and_heal_symlinks(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_COMFYUI_DIR):
+    """
+    Kiểm tra và tự động phục hồi toàn bộ hệ thống Symlinks:
+    - 38 danh mục Model AI (models/*).
+    - Thư mục input và output (phẳng).
+    - Thư mục user và workflows.
+    Đảm bảo 100% không có broken symlink trước khi ComfyUI khởi chạy.
+    """
+    healed = 0
+    # 1. Models AI (38 danh mục)
+    subfolders = load_model_subfolders()
+    for sf in subfolders:
+        drive_sf_path = os.path.join(data_dir, sf)
+        colab_sf_path = os.path.join(comfyui_dir, sf)
+        os.makedirs(drive_sf_path, exist_ok=True)
+        is_healthy = False
+        if os.path.islink(colab_sf_path):
+            try:
+                target = os.readlink(colab_sf_path)
+                if os.path.exists(target) and os.path.samefile(target, drive_sf_path):
+                    is_healthy = True
+            except Exception:
+                is_healthy = False
+        if not is_healthy:
+            if os.path.islink(colab_sf_path) or os.path.isfile(colab_sf_path):
+                try:
+                    os.remove(colab_sf_path)
+                except Exception:
+                    pass
+            elif os.path.isdir(colab_sf_path):
+                try:
+                    shutil.rmtree(colab_sf_path)
+                except Exception:
+                    pass
+            os.makedirs(os.path.dirname(colab_sf_path), exist_ok=True)
+            try:
+                os.symlink(drive_sf_path, colab_sf_path)
+                healed += 1
+            except Exception:
+                pass
+
+    # 2. Input & Output
+    for folder in ["input", "output"]:
+        drive_path = os.path.join(data_dir, folder)
+        colab_path = os.path.join(comfyui_dir, folder)
+        os.makedirs(drive_path, exist_ok=True)
+        is_healthy = False
+        if os.path.islink(colab_path):
+            try:
+                target = os.readlink(colab_path)
+                if os.path.exists(target) and os.path.samefile(target, drive_path):
+                    is_healthy = True
+            except Exception:
+                is_healthy = False
+        if not is_healthy:
+            if os.path.islink(colab_path) or os.path.isfile(colab_path):
+                try:
+                    os.remove(colab_path)
+                except Exception:
+                    pass
+            elif os.path.isdir(colab_path):
+                try:
+                    shutil.rmtree(colab_path)
+                except Exception:
+                    pass
+            try:
+                os.symlink(drive_path, colab_path)
+                healed += 1
+            except Exception:
+                pass
+
+    # 3. User & Workflows
+    drive_user = os.path.join(data_dir, "user")
+    drive_wf = os.path.join(drive_user, "default", "workflows")
+    os.makedirs(drive_wf, exist_ok=True)
+    colab_user = os.path.join(comfyui_dir, "user")
+    is_healthy = False
+    if os.path.islink(colab_user):
+        try:
+            target = os.readlink(colab_user)
+            if os.path.exists(target) and os.path.samefile(target, drive_user):
+                is_healthy = True
+        except Exception:
+            is_healthy = False
+    if not is_healthy:
+        if os.path.islink(colab_user) or os.path.isfile(colab_user):
+            try:
+                os.remove(colab_user)
+            except Exception:
+                pass
+        elif os.path.isdir(colab_user):
+            try:
+                shutil.rmtree(colab_user)
+            except Exception:
+                pass
+        try:
+            os.symlink(drive_user, colab_user)
+            healed += 1
+        except Exception:
+            pass
+
+    # Alias workflows
+    for al in [os.path.join(comfyui_dir, "workflows"), os.path.join(comfyui_dir, "pysssss-workflows")]:
+        is_healthy = False
+        if os.path.islink(al):
+            try:
+                target = os.readlink(al)
+                if os.path.exists(target) and os.path.samefile(target, drive_wf):
+                    is_healthy = True
+            except Exception:
+                is_healthy = False
+        if not is_healthy:
+            if os.path.islink(al) or os.path.isfile(al):
+                try:
+                    os.remove(al)
+                except Exception:
+                    pass
+            elif os.path.isdir(al):
+                try:
+                    shutil.rmtree(al)
+                except Exception:
+                    pass
+            try:
+                os.symlink(drive_wf, al)
+                healed += 1
+            except Exception:
+                pass
+
+    if healed > 0:
+        print(f"🔗 [Health-Check] Đã tự động phục hồi và tối ưu {healed} đường liên kết (Symlinks) Google Drive!")
+    return healed
 
 def setup_user_and_workflows(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_COMFYUI_DIR):
     """

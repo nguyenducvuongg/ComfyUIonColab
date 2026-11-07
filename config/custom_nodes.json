@@ -18,7 +18,7 @@
     },
     {
       "name": "ComfyUI-Pixaroma",
-      "url": "https://gitlab.com/pixaroma/comfyui-pixaroma.git"
+      "url": "https://github.com/pixaroma/comfyui-pixaroma.git"
     },
     {
       "name": "rgthree-comfy",

@@ -23,12 +23,14 @@ from .environment import (
 from .storage import (
     setup_model_symlinks,
     setup_io_directories,
-    setup_user_and_workflows
+    setup_user_and_workflows,
+    validate_and_heal_symlinks
 )
 from .patches import apply_all_patches
 from .custom_nodes import (
     restore_custom_nodes_backup,
     setup_all_custom_nodes,
+    ensure_pixaroma_latest,
     create_compact_nodes_backup,
     install_custom_nodes_requirements
 )

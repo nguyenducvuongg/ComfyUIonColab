@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import json
 import zipfile
+import hashlib
 from .config import (
     DEFAULT_COMFYUI_DIR,
     DEFAULT_DRIVE_DATA_DIR,
@@ -14,6 +15,7 @@ from .config import (
     PROTECTED_PACKAGES
 )
 from .patches import patch_vhs_loadvideo
+from .storage import cleanup_duplicate_encoded_files
 
 def load_default_nodes():
     """Nạp danh sách Custom Nodes từ tệp json config."""
@@ -30,7 +32,7 @@ def load_default_nodes():
             {"name": "ComfyUI-Impact-Pack", "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"},
             {"name": "ComfyUI-Custom-Scripts", "url": "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"},
             {"name": "ComfyUI-Crystools", "url": "https://github.com/crystian/ComfyUI-Crystools.git"},
-            {"name": "ComfyUI-Pixaroma", "url": "https://gitlab.com/pixaroma/comfyui-pixaroma.git"},
+            {"name": "ComfyUI-Pixaroma", "url": "https://github.com/pixaroma/comfyui-pixaroma.git"},
             {"name": "rgthree-comfy", "url": "https://github.com/rgthree/rgthree-comfy.git"},
             {"name": "ComfyUI-SeedVR2_VideoUpscaler", "url": "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"},
             {"name": "ComfyUI-Krea2T-Enhancer", "url": "https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer.git"},
@@ -98,8 +100,165 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
 
     return False, backup_zip
 
+def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
+    """
+    Đảm bảo ComfyUI-Pixaroma luôn ở phiên bản mới nhất và đầy đủ nhất:
+    1. Tự động cập nhật / clone từ upstream chính thức (ưu tiên GitHub, fallback GitLab).
+    2. Khôi phục Git tracking nếu node được phục hồi từ zip backup không có .git.
+    3. Đồng bộ toàn bộ 26+ workflow mẫu chính hãng vào workflows/Pixaroma/ với cơ chế:
+       - SHA256 & Filename deduplication: Tuyệt đối không trùng lặp.
+       - Không ghi đè lên các workflow cá nhân của người dùng.
+       - Không tạo file rác (%20, %2B, .tmp, file đuôi số _1).
+       - Giữ nguyên thư mục workflows trong git để git fetch/pull không bị xung đột.
+    """
+    pixaroma_dir = os.path.join(custom_nodes_dir, "ComfyUI-Pixaroma")
+    github_url = "https://github.com/pixaroma/comfyui-pixaroma.git"
+    gitlab_url = "https://gitlab.com/pixaroma/comfyui-pixaroma.git"
+    git_dir = os.path.join(pixaroma_dir, ".git")
+
+    has_changed = False
+
+    # 1. Cài đặt mới nếu chưa tồn tại
+    if not os.path.exists(pixaroma_dir):
+        print("  📥 [Pixaroma] Đang cài đặt ComfyUI-Pixaroma bản mới nhất từ upstream...")
+        res = subprocess.run(
+            ["git", "clone", "--depth", "1", "-q", github_url, pixaroma_dir],
+            capture_output=True,
+            check=False
+        )
+        if res.returncode != 0:
+            res = subprocess.run(
+                ["git", "clone", "--depth", "1", "-q", gitlab_url, pixaroma_dir],
+                capture_output=True,
+                check=False
+            )
+        if res.returncode == 0:
+            has_changed = True
+            print("  ✅ [Pixaroma] Đã cài đặt thành công phiên bản mới nhất từ upstream.")
+        else:
+            print("  ⚠️ [Pixaroma] Không thể kết nối để clone Pixaroma.")
+            return False
+
+    # 2. Nếu đã tồn tại nhưng thiếu .git (do phục hồi từ zip backup) -> khôi phục tracking
+    elif not os.path.exists(git_dir):
+        print("  🔄 [Pixaroma] Khôi phục Git tracking để tự động đồng bộ bản mới nhất...")
+        try:
+            subprocess.run(["git", "-C", pixaroma_dir, "init", "-q"], check=False)
+            subprocess.run(["git", "-C", pixaroma_dir, "remote", "add", "origin", github_url], check=False)
+            fetch_res = subprocess.run(
+                ["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"],
+                capture_output=True,
+                check=False
+            )
+            if fetch_res.returncode != 0:
+                subprocess.run(["git", "-C", pixaroma_dir, "remote", "set-url", "origin", gitlab_url], check=False)
+                subprocess.run(["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"], check=False)
+            subprocess.run(["git", "-C", pixaroma_dir, "reset", "--hard", "origin/main", "-q"], check=False)
+            has_changed = True
+            print("  ✅ [Pixaroma] Đã khôi phục tracking và cập nhật lên commit mới nhất thành công!")
+        except Exception as e:
+            print(f"  ⚠️ [Pixaroma] Ghi chú cập nhật git: {e}")
+
+    # 3. Nếu đã có .git -> đồng bộ thẳng lên HEAD mới nhất
+    else:
+        try:
+            fetch_res = subprocess.run(
+                ["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"],
+                capture_output=True,
+                check=False
+            )
+            if fetch_res.returncode != 0:
+                subprocess.run(["git", "-C", pixaroma_dir, "remote", "set-url", "origin", gitlab_url], check=False)
+                subprocess.run(["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"], check=False)
+            reset_res = subprocess.run(
+                ["git", "-C", pixaroma_dir, "reset", "--hard", "origin/main", "-q"],
+                capture_output=True,
+                check=False
+            )
+            if reset_res.returncode == 0:
+                has_changed = True
+                print("  ✅ [Pixaroma] Đã đồng bộ phiên bản mới nhất từ upstream.")
+        except Exception as e:
+            print(f"  ⚠️ [Pixaroma] Ghi chú cập nhật: {e}")
+
+    # 4. Bảo toàn & Đồng bộ Workflows mẫu Pixaroma vào Google Drive (Chống trùng lặp & Chống file rác)
+    if drive_default_workflows:
+        os.makedirs(drive_default_workflows, exist_ok=True)
+        target_pix_dir = os.path.join(drive_default_workflows, "Pixaroma")
+        os.makedirs(target_pix_dir, exist_ok=True)
+
+        src_wf_dir = os.path.join(pixaroma_dir, "workflows")
+        if os.path.exists(src_wf_dir) and os.path.isdir(src_wf_dir):
+            existing_hashes = set()
+            existing_filenames = set()
+
+            for root, _, files in os.walk(drive_default_workflows):
+                for f in files:
+                    if f.endswith('.json'):
+                        fp = os.path.join(root, f)
+                        try:
+                            if os.path.getsize(fp) > 0:
+                                existing_filenames.add(f.lower())
+                                with open(fp, 'rb') as jf:
+                                    existing_hashes.add(hashlib.sha256(jf.read()).hexdigest())
+                        except Exception:
+                            pass
+
+            synced_count = 0
+            for item in os.listdir(src_wf_dir):
+                if item.startswith('.') or item.endswith(('.tmp', '.temp', '.bak')):
+                    continue
+                src_item = os.path.join(src_wf_dir, item)
+                if not os.path.isfile(src_item):
+                    continue
+
+                dst_item = os.path.join(target_pix_dir, item)
+
+                if item.endswith('.json'):
+                    try:
+                        with open(src_item, 'rb') as f_in:
+                            content = f_in.read()
+                        h = hashlib.sha256(content).hexdigest()
+                        # Bỏ qua nếu nội dung hoặc tên file đã tồn tại (không trùng lặp, không sinh file _1)
+                        if h in existing_hashes or item.lower() in existing_filenames:
+                            continue
+                        with open(dst_item, 'wb') as f_out:
+                            f_out.write(content)
+                        existing_hashes.add(h)
+                        existing_filenames.add(item.lower())
+                        synced_count += 1
+
+                        # Sao chép thumbnail ảnh đi kèm chính xác với workflow vừa nạp (không tạo ảnh mồ côi)
+                        base_stem, _ = os.path.splitext(item)
+                        for ext in ('.jpg', '.jpeg', '.png', '.webp'):
+                            thumb_src = os.path.join(src_wf_dir, f"{base_stem}{ext}")
+                            thumb_dst = os.path.join(target_pix_dir, f"{base_stem}{ext}")
+                            if os.path.exists(thumb_src) and not os.path.exists(thumb_dst):
+                                try:
+                                    shutil.copy2(thumb_src, thumb_dst)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+            if synced_count > 0:
+                print(f"  🎨 [Pixaroma] Đã đồng bộ an toàn {synced_count} workflow mẫu mới nhất vào 'workflows/Pixaroma/' (Không trùng lặp)!")
+            else:
+                print("  🎨 [Pixaroma] Thư viện workflow mẫu đã đầy đủ và đồng bộ hoàn hảo (Không có file trùng lặp).")
+
+        cleaned = cleanup_duplicate_encoded_files(drive_default_workflows)
+        if cleaned > 0:
+            print(f"  🧹 [Pixaroma] Đã dọn sạch {cleaned} tệp rác (%20, %2B, 0-byte) trong thư mục workflows.")
+
+    return has_changed
+
 def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, index=1, total=1):
     """Cài đặt hoặc cập nhật một Custom Node từ upstream chính thống."""
+    if name == "ComfyUI-Pixaroma":
+        print(f"  [{index}/{total}] 🚀 Tự động cập nhật ComfyUI-Pixaroma lên bản mới nhất...")
+        has_new = ensure_pixaroma_latest(custom_nodes_dir)
+        return has_new
+
     node_path = os.path.join(custom_nodes_dir, name)
     has_new = False
     
@@ -118,14 +277,26 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
                 shutil.rmtree(node_path, ignore_errors=True)
             print(f"  [{index}/{total}] ⚠️ {name} (Không thể tải từ {git_url})")
     elif update_nodes:
-        try:
-            subprocess.run(["git", "-C", node_path, "fetch", "--all", "-q"], capture_output=True, check=False)
-            pull_res = subprocess.run(["git", "-C", node_path, "pull", "-q"], capture_output=True, text=True, check=False)
-            if "Already up to date" not in pull_res.stdout and pull_res.returncode == 0:
+        git_dir = os.path.join(node_path, ".git")
+        if not os.path.exists(git_dir):
+            try:
+                subprocess.run(["git", "-C", node_path, "init", "-q"], check=False)
+                subprocess.run(["git", "-C", node_path, "remote", "add", "origin", git_url], check=False)
+                subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], check=False)
+                subprocess.run(["git", "-C", node_path, "reset", "--hard", "origin/HEAD", "-q"], check=False)
                 has_new = True
-                print(f"  [{index}/{total}] 🔄 {name} (Đã cập nhật phiên bản mới nhất)")
-        except Exception:
-            pass
+                print(f"  [{index}/{total}] 🔄 {name} (Đã khôi phục tracking & cập nhật)")
+            except Exception:
+                pass
+        else:
+            try:
+                subprocess.run(["git", "-C", node_path, "fetch", "--all", "-q"], capture_output=True, check=False)
+                pull_res = subprocess.run(["git", "-C", node_path, "pull", "-q"], capture_output=True, text=True, check=False)
+                if "Already up to date" not in pull_res.stdout and pull_res.returncode == 0:
+                    has_new = True
+                    print(f"  [{index}/{total}] 🔄 {name} (Đã cập nhật phiên bản mới nhất)")
+            except Exception:
+                pass
     return has_new
 
 def setup_all_custom_nodes(
@@ -168,20 +339,8 @@ def setup_all_custom_nodes(
         if n_changed:
             has_any_new = True
 
-    # Liên kết đồng bộ 2 chiều Pixaroma Workflows (Alt + W)
-    if drive_default_workflows:
-        pixaroma_dir = os.path.join(custom_nodes_dir, "ComfyUI-Pixaroma")
-        if os.path.exists(pixaroma_dir):
-            pixaroma_wf_dir = os.path.join(pixaroma_dir, "workflows")
-            if os.path.islink(pixaroma_wf_dir) or os.path.isfile(pixaroma_wf_dir):
-                os.remove(pixaroma_wf_dir)
-            elif os.path.isdir(pixaroma_wf_dir):
-                shutil.rmtree(pixaroma_wf_dir)
-            try:
-                os.symlink(drive_default_workflows, pixaroma_wf_dir)
-                print("  ✅ Đã kết nối Đồng bộ 2 Chiều Pixaroma (Alt + W) <-> Google Drive Workflows!")
-            except Exception as e:
-                print(f"  ⚠️ Ghi chú liên kết Pixaroma: {e}")
+    # Đảm bảo Pixaroma luôn ở bản mới nhất và workflows mẫu đồng bộ sạch sẽ, không trùng lặp
+    ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=drive_default_workflows)
 
     # Áp dụng patch cho VHS
     patch_vhs_loadvideo(custom_nodes_dir)
