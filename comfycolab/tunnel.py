@@ -227,24 +227,29 @@ def run_comfyui(
                 env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
             break
     
-    # 5. Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi đã sẵn sàng
-    try:
-        import torchsde
-    except ImportError:
-        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện sampling cốt lõi 'torchsde'...")
-        subprocess.run(["uv", "pip", "install", "--system", "torchsde"], check=False)
-
-    try:
-        import piexif
-    except ImportError:
-        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện cho Impact-Pack & Rembg (piexif, segment-anything, scikit-image, kornia)...")
-        subprocess.run(["uv", "pip", "install", "--system", "piexif", "segment-anything", "scikit-image", "kornia"], check=False)
-
-    try:
-        import imageio_ffmpeg
-    except ImportError:
-        print("  📥 [Tự sửa lỗi] Đang bổ sung thư viện 'imageio-ffmpeg' cho Pixaroma...")
-        subprocess.run(["uv", "pip", "install", "--system", "imageio-ffmpeg"], check=False)
+    # 5. Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi và Custom Nodes luôn sẵn sàng
+    healing_targets = [
+        ("torchsde", "torchsde", "thư viện sampling cốt lõi ComfyUI"),
+        ("piexif", "piexif", "thư viện metadata Impact-Pack"),
+        ("segment_anything", "segment-anything", "thư viện SAM cho Impact-Pack"),
+        ("ultralytics", "ultralytics", "thư viện YOLO cho Impact-Pack"),
+        ("kornia", "kornia", "thư viện thị giác máy tính Kornia"),
+        ("skimage", "scikit-image", "thư viện xử lý ảnh Scikit-Image"),
+        ("transparent_background", "transparent-background", "thư viện bóc tách phông InSPyReNet"),
+        ("imageio_ffmpeg", "imageio-ffmpeg", "thư viện video codec Pixaroma/VHS"),
+    ]
+    missing_pkgs = []
+    for mod_name, pkg_name, desc in healing_targets:
+        try:
+            __import__(mod_name)
+        except ImportError:
+            print(f"  📥 [Tự sửa lỗi] Đang bổ sung {desc} ('{pkg_name}')...")
+            missing_pkgs.append(pkg_name)
+    if missing_pkgs:
+        subprocess.run(
+            ["uv", "pip", "install", "--system", "--extra-index-url", "https://download.pytorch.org/whl/cu124"] + missing_pkgs,
+            check=False
+        )
 
     cmd_args = [
         sys.executable, "-u", "main.py",

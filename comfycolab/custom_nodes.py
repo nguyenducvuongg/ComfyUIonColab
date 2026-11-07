@@ -45,7 +45,7 @@ def load_default_nodes():
             {"name": "ComfyUI-Video-Depth-Anything", "url": "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"},
             {"name": "ComfyUI-IPAdapter_plus", "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"},
             {"name": "comfyui_controlnet_aux", "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"},
-            {"name": "ComfyUI-Inspyrenet-Rembg", "url": "https://github.com/filliptm/ComfyUI_Fill-Nodes.git"}
+            {"name": "ComfyUI-Inspyrenet-Rembg", "url": "https://github.com/john-mnz/ComfyUI-Inspyrenet-Rembg.git"}
         ],
         "video_nodes": [
             {"name": "ComfyUI-KJNodes", "url": "https://github.com/kijai/ComfyUI-KJNodes.git"},
@@ -290,6 +290,7 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
                 pass
         else:
             try:
+                subprocess.run(["git", "-C", node_path, "remote", "set-url", "origin", git_url], check=False)
                 subprocess.run(["git", "-C", node_path, "fetch", "--all", "-q"], capture_output=True, check=False)
                 pull_res = subprocess.run(["git", "-C", node_path, "pull", "-q"], capture_output=True, text=True, check=False)
                 if "Already up to date" not in pull_res.stdout and pull_res.returncode == 0:
@@ -394,7 +395,11 @@ def install_custom_nodes_requirements(custom_nodes_dir):
         "piexif",
         "segment-anything",
         "scikit-image",
-        "kornia"
+        "kornia",
+        "ultralytics",
+        "transparent-background",
+        "imageio-ffmpeg",
+        "torchsde"
     ], capture_output=True, check=False)
 
     requirements_args = []
@@ -431,3 +436,14 @@ def install_custom_nodes_requirements(custom_nodes_dir):
         print("  ✅ Đã cài đặt hoàn tất mọi thư viện bổ trợ cho Custom Nodes.")
     else:
         print("  ✅ Tất cả Custom Nodes đã sẵn sàng thư viện.")
+
+    # Tự động thực thi install.py nếu custom node có file cài đặt riêng (như Impact-Pack)
+    for root, dirs, files in os.walk(custom_nodes_dir):
+        if os.path.dirname(root) == custom_nodes_dir and "install.py" in files:
+            inst_script = os.path.join(root, "install.py")
+            node_name = os.path.basename(root)
+            try:
+                print(f"  ⚙️ Đang thực thi cài đặt chuyên biệt cho node '{node_name}'...")
+                subprocess.run([sys.executable, inst_script], cwd=root, capture_output=True, check=False)
+            except Exception:
+                pass
