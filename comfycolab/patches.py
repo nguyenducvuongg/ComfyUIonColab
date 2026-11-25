@@ -44,10 +44,11 @@ def patch_user_manager(comfyui_dir=DEFAULT_COMFYUI_DIR):
                 if idx_colon != -1:
                     content = content[:idx_colon+1] + "\n" + patch_code + content[idx_colon+1:]
 
-            content = content.replace(
-                "return os.path.join(user_dir, file)",
-                "return self._resolve_smart_user_file(user_dir, file) # _patched_smart_resolver"
-            )
+            replaced_return = "return self._resolve_smart_user_file(user_dir, file) # _patched_smart_resolver"
+            updated_content = content.replace("return os.path.join(user_dir, file)", replaced_return)
+            if updated_content == content:
+                print("⚠️ Cảnh báo: Cấu trúc user_manager.py đã thay đổi ở bản ComfyUI mới, bỏ qua hook resolver.")
+            content = updated_content
 
         content = content.replace('@routes.get("/userdata/{file}")', '@routes.get("/userdata/{file:.*}")')
         content = content.replace('@routes.get("/api/userdata/{file}")', '@routes.get("/api/userdata/{file:.*}")')
@@ -68,10 +69,17 @@ def patch_universal_multimedia_hook(comfyui_dir=DEFAULT_COMFYUI_DIR):
             if "_universal_multimedia_master_hook" not in content:
                 master_patch = '''
 # --- UNIVERSAL DYNAMIC MODEL & MULTI-MEDIA MASTER HOOK ---
+import time as _universal_time
+_universal_media_cache = {"ts": 0.0, "files": []}
 _orig_get_filename_list = get_filename_list
 def _universal_get_filename_list(folder_name):
     file_list = _orig_get_filename_list(folder_name)
     if folder_name in ["input", "video", "image", "audio"]:
+        now = _universal_time.monotonic()
+        if now - _universal_media_cache["ts"] < 2.0 and _universal_media_cache["files"]:
+            merged = set(file_list)
+            merged.update(_universal_media_cache["files"])
+            return sorted(merged)
         in_d = get_input_directory()
         out_d = get_output_directory()
         media_exts = {
@@ -79,15 +87,28 @@ def _universal_get_filename_list(folder_name):
             '.mp4', '.mkv', '.mov', '.avi', '.webm', '.gif',
             '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'
         }
+        discovered = []
         for d in [in_d, out_d]:
             if d and os.path.exists(d):
-                for root, _, files in os.walk(d, followlinks=True):
-                    for f in files:
-                        if not f.startswith('.'):
-                            ext = os.path.splitext(f)[1].lower()
-                            if ext in media_exts and f not in file_list:
-                                file_list.append(f)
-    return sorted(list(set(file_list)))
+                scan_dirs = [d]
+                for sub in ("pixaroma", "3d", "outputs"):
+                    sp = os.path.join(d, sub)
+                    if os.path.isdir(sp):
+                        scan_dirs.append(sp)
+                for sd in scan_dirs:
+                    try:
+                        with os.scandir(sd) as it:
+                            for entry in it:
+                                if not entry.name.startswith('.') and entry.is_file():
+                                    ext = os.path.splitext(entry.name)[1].lower()
+                                    if ext in media_exts:
+                                        discovered.append(entry.name)
+                    except OSError:
+                        pass
+        _universal_media_cache["ts"] = now
+        _universal_media_cache["files"] = discovered
+        file_list = list(set(file_list) | set(discovered))
+    return sorted(file_list)
 get_filename_list = _universal_get_filename_list
 
 _orig_get_annotated_filepath = get_annotated_filepath

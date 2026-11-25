@@ -3,19 +3,26 @@ Quản lý cài đặt, cập nhật, sao lưu Smart Live Backup và tối ưu d
 """
 
 import os
+import sys
 import shutil
 import subprocess
 import json
 import zipfile
 import hashlib
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .config import (
     DEFAULT_COMFYUI_DIR,
     DEFAULT_DRIVE_DATA_DIR,
     CONFIG_DIR,
     PROTECTED_PACKAGES
 )
+from .environment import get_pytorch_cuda_index_url
 from .patches import patch_vhs_loadvideo
 from .storage import cleanup_duplicate_encoded_files
+
+_PRINT_LOCK = threading.Lock()
 
 def load_default_nodes():
     """Nạp danh sách Custom Nodes từ tệp json config."""
@@ -75,9 +82,18 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
     if os.path.exists(backup_zip):
         size_mb = round(os.path.getsize(backup_zip) / (1024 * 1024), 1)
         print(f"  📦 Phát hiện bản sao lưu Custom Nodes trên Drive ({size_mb} MB). Đang giải nén siêu tốc...")
-        t0 = os.times()
         try:
-            shutil.unpack_archive(backup_zip, custom_nodes_dir)
+            unzip_bin = shutil.which("unzip")
+            if unzip_bin:
+                res = subprocess.run(
+                    [unzip_bin, "-q", "-o", backup_zip, "-d", custom_nodes_dir],
+                    capture_output=True,
+                    check=False
+                )
+                if res.returncode != 0:
+                    shutil.unpack_archive(backup_zip, custom_nodes_dir)
+            else:
+                shutil.unpack_archive(backup_zip, custom_nodes_dir)
             restored_count = len([d for d in os.listdir(custom_nodes_dir) if os.path.isdir(os.path.join(custom_nodes_dir, d))])
             print(f"  \033[92m✅ Đã khôi phục {restored_count} Custom Nodes từ bản sao lưu thành công chỉ trong vài giây!\033[0m")
             return True, backup_zip
@@ -252,18 +268,33 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
 
     return has_changed
 
+def _safe_print(msg):
+    """In log an toàn khi chạy đa luồng."""
+    with _PRINT_LOCK:
+        print(msg)
+
+def _get_git_head(repo_path):
+    """Trả về commit hash hiện tại của repo git, hoặc chuỗi rỗng nếu chưa có."""
+    res = subprocess.run(
+        ["git", "-C", repo_path, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    return res.stdout.strip() if res.returncode == 0 else ""
+
 def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, index=1, total=1):
     """Cài đặt hoặc cập nhật một Custom Node từ upstream chính thống."""
     if name == "ComfyUI-Pixaroma":
-        print(f"  [{index}/{total}] 🚀 Tự động cập nhật ComfyUI-Pixaroma lên bản mới nhất...")
+        _safe_print(f"  [{index}/{total}] 🚀 Tự động cập nhật ComfyUI-Pixaroma lên bản mới nhất...")
         has_new = ensure_pixaroma_latest(custom_nodes_dir)
         return has_new
 
     node_path = os.path.join(custom_nodes_dir, name)
     has_new = False
-    
+
     if not os.path.exists(node_path):
-        print(f"  [{index}/{total}] 📥 Cloning {name}...")
+        _safe_print(f"  [{index}/{total}] 📥 Cloning {name}...")
         res = subprocess.run(
             ["git", "clone", "--depth", "1", "--no-tags", "-q", git_url, node_path],
             capture_output=True,
@@ -271,31 +302,35 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
         )
         if res.returncode == 0:
             has_new = True
-            print(f"  [{index}/{total}] ✅ {name} (Đã cài đặt thành công)")
+            _safe_print(f"  [{index}/{total}] ✅ {name} (Đã cài đặt thành công)")
         else:
             if os.path.exists(node_path):
                 shutil.rmtree(node_path, ignore_errors=True)
-            print(f"  [{index}/{total}] ⚠️ {name} (Không thể tải từ {git_url})")
+            _safe_print(f"  [{index}/{total}] ⚠️ {name} (Không thể tải từ {git_url})")
     elif update_nodes:
         git_dir = os.path.join(node_path, ".git")
         if not os.path.exists(git_dir):
             try:
-                subprocess.run(["git", "-C", node_path, "init", "-q"], check=False)
-                subprocess.run(["git", "-C", node_path, "remote", "add", "origin", git_url], check=False)
-                subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], check=False)
-                subprocess.run(["git", "-C", node_path, "reset", "--hard", "origin/HEAD", "-q"], check=False)
-                has_new = True
-                print(f"  [{index}/{total}] 🔄 {name} (Đã khôi phục tracking & cập nhật)")
+                subprocess.run(["git", "-C", node_path, "init", "-q"], capture_output=True, check=False)
+                subprocess.run(["git", "-C", node_path, "remote", "add", "origin", git_url], capture_output=True, check=False)
+                fetch_res = subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], capture_output=True, check=False)
+                if fetch_res.returncode == 0:
+                    subprocess.run(["git", "-C", node_path, "reset", "--hard", "FETCH_HEAD", "-q"], capture_output=True, check=False)
+                    has_new = True
+                    _safe_print(f"  [{index}/{total}] 🔄 {name} (Đã khôi phục tracking & cập nhật)")
             except Exception:
                 pass
         else:
             try:
-                subprocess.run(["git", "-C", node_path, "remote", "set-url", "origin", git_url], check=False)
-                subprocess.run(["git", "-C", node_path, "fetch", "--all", "-q"], capture_output=True, check=False)
-                pull_res = subprocess.run(["git", "-C", node_path, "pull", "-q"], capture_output=True, text=True, check=False)
-                if "Already up to date" not in pull_res.stdout and pull_res.returncode == 0:
-                    has_new = True
-                    print(f"  [{index}/{total}] 🔄 {name} (Đã cập nhật phiên bản mới nhất)")
+                old_head = _get_git_head(node_path)
+                subprocess.run(["git", "-C", node_path, "remote", "set-url", "origin", git_url], capture_output=True, check=False)
+                fetch_res = subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], capture_output=True, check=False)
+                if fetch_res.returncode == 0:
+                    subprocess.run(["git", "-C", node_path, "reset", "--hard", "FETCH_HEAD", "-q"], capture_output=True, check=False)
+                    new_head = _get_git_head(node_path)
+                    if new_head and new_head != old_head:
+                        has_new = True
+                        _safe_print(f"  [{index}/{total}] 🔄 {name} (Đã cập nhật phiên bản mới nhất)")
             except Exception:
                 pass
     return has_new
@@ -306,7 +341,7 @@ def setup_all_custom_nodes(
     install_video_nodes=True,
     drive_default_workflows=None
 ):
-    """Cài đặt và đồng bộ toàn bộ Custom Nodes cần thiết."""
+    """Cài đặt và đồng bộ song song toàn bộ Custom Nodes cần thiết."""
     nodes_config = load_default_nodes()
     core_nodes = nodes_config.get("core_nodes", [])
     video_nodes = nodes_config.get("video_nodes", [])
@@ -325,25 +360,35 @@ def setup_all_custom_nodes(
             pass
 
     total = len(all_target_nodes)
-    print(f"\n[6/10] 🧩 Kiểm tra và đồng bộ {total} Custom Nodes chính thống...")
+    print(f"\n[6/10] 🧩 Kiểm tra và đồng bộ song song {total} Custom Nodes chính thống...")
 
     has_any_new = False
-    for i, node in enumerate(all_target_nodes, 1):
-        n_changed = install_or_update_node(
-            node["name"],
-            node["url"],
-            custom_nodes_dir,
-            update_nodes=update_nodes,
-            index=i,
-            total=total
-        )
-        if n_changed:
-            has_any_new = True
+    other_nodes = [(i, node) for i, node in enumerate(all_target_nodes, 1) if node["name"] != "ComfyUI-Pixaroma"]
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [
+            executor.submit(
+                install_or_update_node,
+                node["name"],
+                node["url"],
+                custom_nodes_dir,
+                update_nodes,
+                i,
+                total
+            )
+            for i, node in other_nodes
+        ]
+        for fut in as_completed(futures):
+            try:
+                if fut.result():
+                    has_any_new = True
+            except Exception:
+                pass
 
     # Đảm bảo Pixaroma luôn ở bản mới nhất và workflows mẫu đồng bộ sạch sẽ, không trùng lặp
-    ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=drive_default_workflows)
+    if ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=drive_default_workflows):
+        has_any_new = True
 
-    # Áp dụng patch cho VHS
+    # Áp dụng patch cho VHS sau khi đã reset/cập nhật xong
     patch_vhs_loadvideo(custom_nodes_dir)
 
     return has_any_new
@@ -379,13 +424,37 @@ def create_compact_nodes_backup(custom_nodes_dir, backup_zip_path):
         print(f"  ⚠️ Lỗi tạo bản sao lưu Custom Nodes: {e}")
         return False
 
+def filter_safe_requirements(lines):
+    """Lọc bỏ các gói bảo vệ (torch, transformers...) mà không làm bẩn file requirements.txt gốc."""
+    cleaned = []
+    for l in lines:
+        line_strip = l.strip()
+        if not line_strip or line_strip.startswith('#') or line_strip.startswith('-'):
+            continue
+        pkg = (
+            line_strip.split('==')[0]
+            .split('>=')[0]
+            .split('<=')[0]
+            .split('>')[0]
+            .split('<')[0]
+            .split('~=')[0]
+            .split('[')[0]
+            .strip()
+            .lower()
+        )
+        if pkg and pkg not in PROTECTED_PACKAGES and not pkg.startswith('nvidia-'):
+            cleaned.append(line_strip + "\n")
+    return cleaned
+
 def install_custom_nodes_requirements(custom_nodes_dir):
-    """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv."""
+    """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv (không ghi đè repo git)."""
     print("\n[8/10] 🛠️ Cài đặt đồng thời thư viện cho SeedVR2 & tất cả các Custom Nodes...")
+    cuda_index = get_pytorch_cuda_index_url()
 
     # Cài các gói bắt buộc cho SeedVR2, Impact-Pack, RemBG & Video
     subprocess.run([
         "uv", "pip", "install", "--system",
+        "--extra-index-url", cuda_index,
         "rotary-embedding-torch>=0.5.3",
         "omegaconf>=2.3.0",
         "einops",
@@ -402,48 +471,67 @@ def install_custom_nodes_requirements(custom_nodes_dir):
         "torchsde"
     ], capture_output=True, check=False)
 
-    requirements_args = []
-    req_files_count = 0
-    for root, _, files in os.walk(custom_nodes_dir):
-        if "requirements.txt" in files:
-            req_path = os.path.join(root, "requirements.txt")
-            try:
-                with open(req_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                cleaned = []
-                for l in lines:
-                    line_strip = l.strip()
-                    if not line_strip or line_strip.startswith('#') or line_strip.startswith('-'):
-                        continue
-                    pkg = line_strip.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('~=')[0].strip().lower()
-                    if pkg not in PROTECTED_PACKAGES and not pkg.startswith('nvidia-'):
-                        cleaned.append(l)
-                with open(req_path, "w", encoding="utf-8") as f:
-                    f.writelines(cleaned)
-            except Exception:
-                pass
-            requirements_args.append("-r")
-            requirements_args.append(req_path)
-            req_files_count += 1
+    tmp_req_dir = tempfile.mkdtemp(prefix="comfycolab_reqs_")
+    temp_req_files = []
+    try:
+        idx = 0
+        for root, dirs, files in os.walk(custom_nodes_dir):
+            dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__')]
+            if "requirements.txt" in files:
+                req_path = os.path.join(root, "requirements.txt")
+                node_label = os.path.relpath(root, custom_nodes_dir)
+                try:
+                    with open(req_path, "r", encoding="utf-8") as f:
+                        cleaned = filter_safe_requirements(f.readlines())
+                    if cleaned:
+                        idx += 1
+                        tmp_path = os.path.join(tmp_req_dir, f"req_{idx}.txt")
+                        with open(tmp_path, "w", encoding="utf-8") as f:
+                            f.writelines(cleaned)
+                        temp_req_files.append((node_label, tmp_path))
+                except Exception:
+                    pass
 
-    if requirements_args:
-        print(f"  📦 Đang đồng bộ dependencies từ {req_files_count} requirements.txt của các node...")
-        subprocess.run(
-            ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", "https://download.pytorch.org/whl/cu124"] + requirements_args,
-            capture_output=True,
-            check=False
-        )
-        print("  ✅ Đã cài đặt hoàn tất mọi thư viện bổ trợ cho Custom Nodes.")
-    else:
-        print("  ✅ Tất cả Custom Nodes đã sẵn sàng thư viện.")
+        if temp_req_files:
+            print(f"  📦 Đang đồng bộ dependencies từ {len(temp_req_files)} requirements.txt của các node...")
+            batch_args = []
+            for _, tp in temp_req_files:
+                batch_args.extend(["-r", tp])
 
-    # Tự động thực thi install.py nếu custom node có file cài đặt riêng (như Impact-Pack)
-    for root, dirs, files in os.walk(custom_nodes_dir):
-        if os.path.dirname(root) == custom_nodes_dir and "install.py" in files:
-            inst_script = os.path.join(root, "install.py")
-            node_name = os.path.basename(root)
-            try:
-                print(f"  ⚙️ Đang thực thi cài đặt chuyên biệt cho node '{node_name}'...")
-                subprocess.run([sys.executable, inst_script], cwd=root, capture_output=True, check=False)
-            except Exception:
-                pass
+            batch_res = subprocess.run(
+                ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", cuda_index] + batch_args,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if batch_res.returncode == 0:
+                print("  ✅ Đã cài đặt hoàn tất mọi thư viện bổ trợ cho Custom Nodes.")
+            else:
+                print("  ⚠️ Phát hiện xung đột khi cài gộp, chuyển sang chế độ cài tách từng node để cô lập lỗi...")
+                for node_label, tp in temp_req_files:
+                    single_res = subprocess.run(
+                        ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", cuda_index, "-r", tp],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    if single_res.returncode != 0:
+                        err_msg = (single_res.stderr or "").strip().splitlines()[-1:] or ["unknown error"]
+                        print(f"    ⚠️ [{node_label}] Bỏ qua gói lỗi: {err_msg[0][:140]}")
+                print("  ✅ Đã hoàn tất đồng bộ dependencies cho các node hợp lệ.")
+        else:
+            print("  ✅ Tất cả Custom Nodes đã sẵn sàng thư viện.")
+    finally:
+        shutil.rmtree(tmp_req_dir, ignore_errors=True)
+
+    # Tự động thực thi install.py nếu custom node cấp 1 có file cài đặt riêng (như Impact-Pack)
+    if os.path.exists(custom_nodes_dir):
+        for entry in os.scandir(custom_nodes_dir):
+            if entry.is_dir():
+                inst_script = os.path.join(entry.path, "install.py")
+                if os.path.isfile(inst_script):
+                    try:
+                        print(f"  ⚙️ Đang thực thi cài đặt chuyên biệt cho node '{entry.name}'...")
+                        subprocess.run([sys.executable, inst_script], cwd=entry.path, capture_output=True, check=False)
+                    except Exception:
+                        pass

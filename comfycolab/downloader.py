@@ -8,12 +8,14 @@
 
 import os
 import sys
+import re
 import json
 import time
 import shutil
 import subprocess
 import posixpath
-from urllib.parse import urlparse, parse_qs, urlunparse, urlencode
+from urllib.parse import urlparse, parse_qs, urlunparse, urlencode, unquote
+from urllib.request import Request, urlopen
 try:
     import ipywidgets as widgets
     from IPython.display import display, clear_output
@@ -91,6 +93,26 @@ def load_or_save_tokens(base_dir=DEFAULT_DRIVE_DATA_DIR, civitai_key="", hf_toke
     active_hf = hf_token.strip() or saved_tokens.get("hf", "")
     return active_civitai, active_hf
 
+def _resolve_remote_filename(url, hf_token=""):
+    """Thử lấy tên file từ header Content-Disposition hoặc redirect URL khi chưa biết tên file."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if hf_token and "huggingface.co" in url:
+        headers["Authorization"] = f"Bearer {hf_token}"
+    try:
+        req = Request(url, method="HEAD", headers=headers)
+        with urlopen(req, timeout=5) as resp:
+            cd = resp.headers.get("Content-Disposition", "")
+            match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";\r\n]+)"?', cd, re.IGNORECASE)
+            if match:
+                return unquote(match.group(1).strip())
+            final_path = urlparse(resp.geturl().split("?")[0]).path
+            base = posixpath.basename(final_path)
+            if "." in base:
+                return unquote(base)
+    except Exception:
+        pass
+    return ""
+
 def download_model_file(
     url,
     folder_type,
@@ -129,7 +151,11 @@ def download_model_file(
         basename = posixpath.basename(parsed_path)
         valid_exts = ["safetensors", "ckpt", "pt", "pth", "bin", "onnx", "yaml", "json", "gguf"]
         if "." in basename and basename.split(".")[-1].lower() in valid_exts:
-            custom_name = basename
+            custom_name = unquote(basename)
+        elif "civitai.com" in url or "huggingface.co" in url:
+            resolved_name = _resolve_remote_filename(url, hf_token=hf_token)
+            if resolved_name:
+                custom_name = resolved_name
 
     # Kiểm tra bỏ qua nếu file đã tồn tại hoàn chỉnh
     if skip_existing and custom_name:
@@ -191,7 +217,6 @@ def download_model_file(
             retry_count += 1
 
     if success:
-        os.sync()
         print(f"🎉 Tải xuống thành công! Tệp đã lưu an toàn tại: {target_dir}")
         return True
     else:

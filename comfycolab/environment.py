@@ -9,7 +9,21 @@ import shutil
 import subprocess
 import time
 import glob
+import importlib.util
 from .config import DEFAULT_COMFYUI_DIR, DEFAULT_DRIVE_DATA_DIR, DEFAULT_LOCAL_DATA_DIR
+
+def get_pytorch_cuda_index_url(default="https://download.pytorch.org/whl/cu124"):
+    """Tự động nhận diện phiên bản CUDA của PyTorch đang cài đặt để chọn đúng wheel index."""
+    try:
+        import torch
+        cuda_ver = getattr(torch.version, "cuda", None)
+        if cuda_ver:
+            parts = str(cuda_ver).strip().split(".")
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                return f"https://download.pytorch.org/whl/cu{parts[0]}{parts[1]}"
+    except Exception:
+        pass
+    return default
 
 def setup_timezone(tz="Asia/Ho_Chi_Minh"):
     """Cài đặt múi giờ Việt Nam để thời gian tệp trên Drive chính xác."""
@@ -82,28 +96,31 @@ def clone_or_update_comfyui(comfyui_dir=DEFAULT_COMFYUI_DIR):
     else:
         print("  ComfyUI đã tồn tại. Đang kéo cập nhật mới nhất từ official upstream...")
         try:
-            subprocess.run(["git", "-C", comfyui_dir, "fetch", "--all", "-q"], capture_output=True, check=False)
-            subprocess.run(["git", "-C", comfyui_dir, "reset", "--hard", "HEAD", "-q"], capture_output=True, check=False)
+            subprocess.run(["git", "-C", comfyui_dir, "fetch", "--depth", "1", "origin", "-q"], capture_output=True, check=False)
+            subprocess.run(["git", "-C", comfyui_dir, "reset", "--hard", "FETCH_HEAD", "-q"], capture_output=True, check=False)
             subprocess.run(["git", "-C", comfyui_dir, "clean", "-fd", "-q"], capture_output=True, check=False)
-            subprocess.run(["git", "-C", comfyui_dir, "pull", "-q"], capture_output=True, check=False)
             print("  ✅ Đã cập nhật ComfyUI Core lên phiên bản mới nhất.")
         except Exception as e:
             print(f"  ⚠️ Lỗi cập nhật git ComfyUI: {e}")
 
+def filter_torch_requirements(lines):
+    """Lọc bỏ torch/torchvision/torchaudio gốc để giữ CUDA build nhưng bảo toàn torchsde."""
+    return [
+        l for l in lines
+        if l.strip() and not l.strip().startswith("#")
+        and not re.match(r'^(torch|torchvision|torchaudio)(\s*([=><!~;@\s]|$))', l.strip(), re.IGNORECASE)
+    ]
+
 def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
     """Cài đặt requirements.txt của ComfyUI bằng uv (lọc bỏ torch để bảo vệ CUDA build)."""
     req_file = os.path.join(comfyui_dir, "requirements.txt")
+    cuda_index = get_pytorch_cuda_index_url()
     if os.path.exists(req_file):
         print("  📥 Đang đồng bộ các thư viện lõi của ComfyUI...")
         tmp_req = os.path.join(comfyui_dir, "temp_safe_requirements.txt")
         try:
             with open(req_file, "r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
-            # Chỉ lọc đúng torch, torchvision, torchaudio cơ sở, KHÔNG lọc các thư viện phái sinh như torchsde
-            safe_lines = [
-                l for l in lines
-                if not re.match(r'^(torch|torchvision|torchaudio)(\s*([=><!~;@\s]|$))', l, re.IGNORECASE)
-            ]
+                safe_lines = filter_torch_requirements([line.strip() for line in f])
             with open(tmp_req, "w", encoding="utf-8") as f:
                 f.write("\n".join(safe_lines) + "\n")
             target_req = tmp_req
@@ -112,7 +129,7 @@ def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
 
         res = subprocess.run([
             "uv", "pip", "install", "--system",
-            "--extra-index-url", "https://download.pytorch.org/whl/cu124",
+            "--extra-index-url", cuda_index,
             "-r", target_req
         ], capture_output=True, text=True, check=False)
 
@@ -127,10 +144,8 @@ def install_comfyui_requirements(comfyui_dir=DEFAULT_COMFYUI_DIR):
         else:
             print(f"  ⚠️ Lưu ý requirements: {res.stderr[:200] if res.stderr else 'OK'}")
 
-    # Đảm bảo chắc chắn torchsde luôn sẵn sàng (thư viện sampling cốt lõi của ComfyUI)
-    try:
-        import torchsde
-    except ImportError:
+    # Đảm bảo chắc chắn torchsde luôn sẵn sàng (kiểm tra bằng find_spec không tốn RAM kernel)
+    if importlib.util.find_spec("torchsde") is None:
         print("  📥 Đang cài đặt thư viện sampling cốt lõi torchsde...")
         subprocess.run(["uv", "pip", "install", "--system", "torchsde"], capture_output=True, check=False)
 
@@ -164,7 +179,7 @@ def verify_pytorch_cuda():
         subprocess.run([
             "uv", "pip", "install", "--system", "--force-reinstall",
             "torch", "torchvision", "torchaudio",
-            "--extra-index-url", "https://download.pytorch.org/whl/cu124"
+            "--extra-index-url", get_pytorch_cuda_index_url()
         ], check=False)
         
         try:

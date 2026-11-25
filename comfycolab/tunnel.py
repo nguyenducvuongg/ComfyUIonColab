@@ -13,6 +13,7 @@ import socket
 import shutil
 import subprocess
 import threading
+import importlib.util
 try:
     from IPython.display import display, HTML
     HAS_IPYTHON = True
@@ -21,6 +22,7 @@ except ImportError:
     display = None
     HTML = None
 from .config import DEFAULT_COMFYUI_DIR
+from .environment import get_pytorch_cuda_index_url
 from .storage import validate_and_heal_symlinks
 from .custom_nodes import ensure_pixaroma_latest
 
@@ -136,19 +138,6 @@ def pinggy_tunnel(port, token="", server="Auto"):
             show_success_card("Pinggy", url)
             break
 
-def colab_proxy_tunnel(port):
-    """Khởi chạy đường truyền qua Colab Proxy sau khi cổng đã mở."""
-    if not wait_for_port(port):
-        print("Timeout: Không tìm thấy ComfyUI hoạt động trên port", port)
-        return
-
-    try:
-        from google.colab.output import eval_js
-        url = eval_js(f"google.colab.kernel.proxyPort({port})")
-        show_success_card("Colab-Proxy", url)
-    except Exception:
-        pass
-
 def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pinggy_server="Auto"):
     """Bắt đầu dịch vụ tunnel tương ứng trong luồng chạy ngầm."""
     if method == "Cloudflare":
@@ -158,11 +147,12 @@ def start_tunnel_service(method="Colab-Proxy", port=8188, pinggy_token="", pingg
         t = threading.Thread(target=pinggy_tunnel, args=(port, pinggy_token, pinggy_server), daemon=True)
         t.start()
 
-def kill_existing_processes():
+def kill_existing_processes(comfyui_dir=DEFAULT_COMFYUI_DIR):
     """Tắt sạch các phiên bản ComfyUI hoặc tunnel cũ đang chạy ngầm."""
-    subprocess.run("pkill -9 -f 'main.py'", shell=True, check=False)
-    subprocess.run("pkill -9 -f cloudflared", shell=True, check=False)
-    subprocess.run("pkill -9 -f pinggy.io", shell=True, check=False)
+    main_py_pattern = os.path.join(comfyui_dir, "main.py")
+    subprocess.run(["pkill", "-9", "-f", main_py_pattern], check=False)
+    subprocess.run(["pkill", "-9", "-f", "cloudflared"], check=False)
+    subprocess.run(["pkill", "-9", "-f", "pinggy.io"], check=False)
 
 def run_comfyui(
     method="Colab-Proxy",
@@ -176,7 +166,7 @@ def run_comfyui(
     """
     Khởi chạy đường truyền và ComfyUI Server với chế độ stream log thời gian thực.
     """
-    kill_existing_processes()
+    kill_existing_processes(comfyui_dir)
 
     # 1. Tự động kiểm tra và phục hồi toàn bộ hệ thống Symlinks Google Drive
     validate_and_heal_symlinks(data_dir=data_dir, comfyui_dir=comfyui_dir)
@@ -227,7 +217,7 @@ def run_comfyui(
                 env["LD_PRELOAD"] = f"{tm_path}:{curr_preload}".rstrip(":") if curr_preload else tm_path
             break
     
-    # 5. Tự động tự sửa lỗi (Self-healing): Đảm bảo các thư viện cốt lõi và Custom Nodes luôn sẵn sàng
+    # 5. Tự động tự sửa lỗi (Self-healing): Kiểm tra bằng find_spec (không nạp vào RAM kernel)
     healing_targets = [
         ("torchsde", "torchsde", "thư viện sampling cốt lõi ComfyUI"),
         ("piexif", "piexif", "thư viện metadata Impact-Pack"),
@@ -240,14 +230,12 @@ def run_comfyui(
     ]
     missing_pkgs = []
     for mod_name, pkg_name, desc in healing_targets:
-        try:
-            __import__(mod_name)
-        except ImportError:
+        if importlib.util.find_spec(mod_name) is None:
             print(f"  📥 [Tự sửa lỗi] Đang bổ sung {desc} ('{pkg_name}')...")
             missing_pkgs.append(pkg_name)
     if missing_pkgs:
         subprocess.run(
-            ["uv", "pip", "install", "--system", "--extra-index-url", "https://download.pytorch.org/whl/cu124"] + missing_pkgs,
+            ["uv", "pip", "install", "--system", "--extra-index-url", get_pytorch_cuda_index_url()] + missing_pkgs,
             check=False
         )
 
@@ -293,6 +281,6 @@ def run_comfyui(
         process.wait()
     except KeyboardInterrupt:
         print("\n\n⏹️ Đã dừng ComfyUI Server theo yêu cầu người dùng.")
-        kill_existing_processes()
+        kill_existing_processes(comfyui_dir)
     except Exception as e:
         print(f"\n❌ Lỗi tiến trình ComfyUI: {e}")
