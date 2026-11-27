@@ -78,6 +78,7 @@ def _wait_until_node_install_stable(local_nodes_dir, new_nodes, stop_event, max_
     deadline = time.monotonic() + max_wait_s
     last_count = -1
     stable_ticks = 0
+    excluded = {".git", "__pycache__", ".venv", "venv", "node_modules"}
     while time.monotonic() < deadline and not stop_event.is_set():
         locked = False
         file_count = 0
@@ -86,7 +87,8 @@ def _wait_until_node_install_stable(local_nodes_dir, new_nodes, stop_event, max_
             if os.path.exists(os.path.join(node_path, ".git", "index.lock")):
                 locked = True
                 break
-            for _, _, files in os.walk(node_path):
+            for _, dirs, files in os.walk(node_path):
+                dirs[:] = [d for d in dirs if d not in excluded]
                 file_count += len(files)
         if not locked and file_count == last_count and file_count > 0:
             stable_ticks += 1

@@ -10,12 +10,14 @@ DEFAULT_COMFYUI_DIR = "/content/ComfyUI"
 DEFAULT_DRIVE_DATA_DIR = "/content/drive/MyDrive/ComfyUI_Data"
 DEFAULT_LOCAL_DATA_DIR = "/content/ComfyUI_Data_Local"
 DEFAULT_REPO_URL = "https://github.com/nguyenducvuongg/ComfyUIonColab.git"
+DEFAULT_SSH_PORT = 2222
+DEFAULT_TAILSCALE_HOSTNAME = "colab-comfy"
 
 # Thư mục gốc chứa package comfycolab
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(os.path.dirname(PACKAGE_DIR), "config")
 
-# Cấu hình danh sách thư mục mô hình ComfyUI
+# Cấu hình danh sách thư mục mô hình ComfyUI (chuẩn hóa không trùng tên hoa/thường trên Drive)
 DEFAULT_MODEL_SUBFOLDERS = [
     "models/checkpoints",
     "models/loras",
@@ -41,7 +43,6 @@ DEFAULT_MODEL_SUBFOLDERS = [
     "models/insightface",
     "models/facerestore_models",
     "models/SEEDVR2",
-    "models/seedvr2",
     "models/background_removal",
     "models/rembg",
     "models/birefnet",

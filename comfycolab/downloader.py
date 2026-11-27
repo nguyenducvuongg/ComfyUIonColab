@@ -30,6 +30,26 @@ from .config import (
     FOLDER_ALIAS_MAP,
     load_model_subfolders
 )
+from .environment import get_colab_secret
+
+def redact_url_tokens(url):
+    """Che giấu token/api key nhạy cảm trong query string trước khi in log."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        sensitive_keys = {"token", "api_key", "apikey", "key", "access_token", "auth"}
+        changed = False
+        for k in list(params.keys()):
+            if k.lower() in sensitive_keys:
+                params[k] = ["***"]
+                changed = True
+        if not changed:
+            return url
+        return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+    except Exception:
+        return url
 
 def normalize_folder_name(folder_name):
     """Chuẩn hóa tên thư mục lưu trữ mô hình."""
@@ -89,8 +109,16 @@ def load_or_save_tokens(base_dir=DEFAULT_DRIVE_DATA_DIR, civitai_key="", hf_toke
     except Exception:
         pass
 
-    active_civitai = civitai_key.strip() or saved_tokens.get("civitai", "")
-    active_hf = hf_token.strip() or saved_tokens.get("hf", "")
+    active_civitai = (
+        civitai_key.strip()
+        or saved_tokens.get("civitai", "")
+        or get_colab_secret("CIVITAI_API_KEY", "")
+    )
+    active_hf = (
+        hf_token.strip()
+        or saved_tokens.get("hf", "")
+        or get_colab_secret("HF_TOKEN", "")
+    )
     return active_civitai, active_hf
 
 def _resolve_remote_filename(url, hf_token=""):
@@ -188,9 +216,16 @@ def download_model_file(
 
     aria2_cmd.append(url)
 
-    print(f"\n🚀 Đang tải trực tiếp vào Google Drive [models/{folder_type}]: {url}")
+    print(f"\n🚀 Đang tải trực tiếp vào Google Drive [models/{folder_type}]: {redact_url_tokens(url)}")
     if custom_name:
         print(f"📄 Tên file sẽ lưu: {custom_name}")
+
+    try:
+        free_gb = shutil.disk_usage(target_dir).free / (1024 ** 3)
+        if free_gb < 5.0:
+            print(f"⚠️ Cảnh báo: Dung lượng trống tại '{target_dir}' chỉ còn {free_gb:.1f} GB!")
+    except Exception:
+        pass
 
     max_retries = 8
     retry_count = 0
@@ -203,10 +238,11 @@ def download_model_file(
 
         process = subprocess.Popen(aria2_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(process.stdout.readline, ''):
-            if line.startswith('[#') and 'ETA:' in line:
-                print('\r' + line.strip(), end='', flush=True)
-            elif line.strip():
-                print('\n' + line.strip())
+            safe_line = redact_url_tokens(line)
+            if safe_line.startswith('[#') and 'ETA:' in safe_line:
+                print('\r' + safe_line.strip(), end='', flush=True)
+            elif safe_line.strip():
+                print('\n' + safe_line.strip())
         process.wait()
         print('')
 

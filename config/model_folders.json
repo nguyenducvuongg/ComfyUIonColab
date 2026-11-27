@@ -23,7 +23,6 @@
   "models/insightface",
   "models/facerestore_models",
   "models/SEEDVR2",
-  "models/seedvr2",
   "models/background_removal",
   "models/rembg",
   "models/birefnet",

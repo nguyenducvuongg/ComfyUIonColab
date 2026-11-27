@@ -1,28 +1,36 @@
 """
-Quản lý cài đặt, cập nhật, sao lưu Smart Live Backup và tối ưu dependencies cho Custom Nodes.
+Quản lý cài đặt, cập nhật, sao lưu Smart Live Backup (.tar.zst / .zip) và tối ưu dependencies cho Custom Nodes.
 """
 
+import hashlib
+import importlib.util
+import json
 import os
-import sys
 import shutil
 import subprocess
-import json
-import zipfile
-import hashlib
+import sys
+import tarfile
 import tempfile
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .config import (
+    CONFIG_DIR,
     DEFAULT_COMFYUI_DIR,
     DEFAULT_DRIVE_DATA_DIR,
-    CONFIG_DIR,
-    PROTECTED_PACKAGES
+    PROTECTED_PACKAGES,
 )
 from .environment import get_pytorch_cuda_index_url
 from .patches import patch_vhs_loadvideo
 from .storage import cleanup_duplicate_encoded_files
 
 _PRINT_LOCK = threading.Lock()
+_EXCLUDED_BACKUP_DIRS = {
+    ".git", "__pycache__", ".pytest_cache", ".venv", "venv",
+    "node_modules", ".mypy_cache", ".ruff_cache",
+}
+_MAX_BACKUP_FILE_BYTES = 50 * 1024 * 1024  # 50 MB: tránh nhầm model weights vào backup code
+
 
 def load_default_nodes():
     """Nạp danh sách Custom Nodes từ tệp json config."""
@@ -52,22 +60,50 @@ def load_default_nodes():
             {"name": "ComfyUI-Video-Depth-Anything", "url": "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"},
             {"name": "ComfyUI-IPAdapter_plus", "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"},
             {"name": "comfyui_controlnet_aux", "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"},
-            {"name": "ComfyUI-Inspyrenet-Rembg", "url": "https://github.com/john-mnz/ComfyUI-Inspyrenet-Rembg.git"}
+            {"name": "ComfyUI-Inspyrenet-Rembg", "url": "https://github.com/john-mnz/ComfyUI-Inspyrenet-Rembg.git"},
         ],
         "video_nodes": [
             {"name": "ComfyUI-KJNodes", "url": "https://github.com/kijai/ComfyUI-KJNodes.git"},
             {"name": "ComfyUI-H3-Motion-Context", "url": "https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context.git"},
             {"name": "ComfyUI-Abhash", "url": "https://github.com/abhash0000/ComfyUI-Abhash.git"},
-            {"name": "ComfyUI-MiniMaxH3-Easy", "url": "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy.git"}
-        ]
+            {"name": "ComfyUI-MiniMaxH3-Easy", "url": "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy.git"},
+        ],
     }
+
+
+def _supports_zstd():
+    """Kiểm tra hệ thống có sẵn zstd để nén/giải nén đa luồng qua tarfile stream hay không."""
+    return bool(shutil.which("zstd"))
+
+
+def _safe_extract_tar_stream(fileobj, dest_dir):
+    """Giải nén tar stream an toàn chống path traversal (tar-slip)."""
+    dest_real = os.path.realpath(dest_dir)
+    extract_kwargs = {"path": dest_real}
+    if sys.version_info >= (3, 12):
+        extract_kwargs["filter"] = "data"
+    with tarfile.open(fileobj=fileobj, mode="r|") as tf:
+        for member in tf:
+            target = os.path.realpath(os.path.join(dest_real, member.name))
+            if os.path.commonpath([dest_real, target]) != dest_real:
+                continue
+            tf.extract(member, **extract_kwargs)
+
+
+def _get_preferred_backup_path(backup_dir):
+    if _supports_zstd():
+        return os.path.join(backup_dir, "custom_nodes_backup.tar.zst")
+    return os.path.join(backup_dir, "custom_nodes_backup.zip")
+
 
 def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstall=False):
     """
-    Khôi phục Custom Nodes siêu tốc từ file sao lưu Google Drive (~3-5 giây).
+    Khôi phục Custom Nodes siêu tốc từ file sao lưu Google Drive (.tar.zst hoặc .zip).
     """
     backup_dir = os.path.join(drive_data_dir, "backup")
+    backup_zst = os.path.join(backup_dir, "custom_nodes_backup.tar.zst")
     backup_zip = os.path.join(backup_dir, "custom_nodes_backup.zip")
+    preferred_backup = _get_preferred_backup_path(backup_dir)
     drive_custom_nodes_dir = os.path.join(drive_data_dir, "custom_nodes")
     os.makedirs(backup_dir, exist_ok=True)
     os.makedirs(custom_nodes_dir, exist_ok=True)
@@ -77,7 +113,28 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
         if os.path.exists(custom_nodes_dir):
             shutil.rmtree(custom_nodes_dir)
         os.makedirs(custom_nodes_dir, exist_ok=True)
-        return False, backup_zip
+        return False, preferred_backup
+
+    if os.path.exists(backup_zst) and _supports_zstd():
+        size_mb = round(os.path.getsize(backup_zst) / (1024 * 1024), 1)
+        print(f"  📦 Phát hiện bản sao lưu Zstandard trên Drive ({size_mb} MB). Đang giải nén siêu tốc...")
+        try:
+            proc = subprocess.Popen(
+                ["zstd", "-dc", backup_zst],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            _safe_extract_tar_stream(proc.stdout, custom_nodes_dir)
+            proc.stdout.close()
+            stderr_bytes = proc.stderr.read()
+            proc.stderr.close()
+            if proc.wait() == 0:
+                restored_count = len([d for d in os.listdir(custom_nodes_dir) if os.path.isdir(os.path.join(custom_nodes_dir, d))])
+                print(f"  \033[92m✅ Đã khôi phục {restored_count} Custom Nodes từ .tar.zst chỉ trong vài giây!\033[0m")
+                return True, preferred_backup
+            raise RuntimeError(stderr_bytes.decode("utf-8", errors="ignore"))
+        except Exception as e:
+            print(f"  ⚠️ Lỗi giải nén .tar.zst ({e}), thử fallback sang .zip nếu có...")
 
     if os.path.exists(backup_zip):
         size_mb = round(os.path.getsize(backup_zip) / (1024 * 1024), 1)
@@ -88,7 +145,7 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
                 res = subprocess.run(
                     [unzip_bin, "-q", "-o", backup_zip, "-d", custom_nodes_dir],
                     capture_output=True,
-                    check=False
+                    check=False,
                 )
                 if res.returncode != 0:
                     shutil.unpack_archive(backup_zip, custom_nodes_dir)
@@ -96,7 +153,7 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
                 shutil.unpack_archive(backup_zip, custom_nodes_dir)
             restored_count = len([d for d in os.listdir(custom_nodes_dir) if os.path.isdir(os.path.join(custom_nodes_dir, d))])
             print(f"  \033[92m✅ Đã khôi phục {restored_count} Custom Nodes từ bản sao lưu thành công chỉ trong vài giây!\033[0m")
-            return True, backup_zip
+            return True, preferred_backup
         except Exception as e:
             print(f"  ⚠️ Lỗi giải nén bản sao lưu: {e}")
 
@@ -112,20 +169,72 @@ def restore_custom_nodes_backup(drive_data_dir, custom_nodes_dir, force_reinstal
                         shutil.copytree(src_node, dst_node, dirs_exist_ok=True)
                     except Exception:
                         pass
-            return True, backup_zip
+            return True, preferred_backup
 
-    return False, backup_zip
+    return False, preferred_backup
+
+
+def _safe_print(msg):
+    """In log an toàn khi chạy đa luồng."""
+    with _PRINT_LOCK:
+        print(msg)
+
+
+def _get_git_head(repo_path):
+    """Trả về commit hash hiện tại của repo git, hoặc chuỗi rỗng nếu chưa có."""
+    res = subprocess.run(
+        ["git", "-C", repo_path, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def _get_git_remote_url(repo_path):
+    res = subprocess.run(
+        ["git", "-C", repo_path, "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def _fetch_default_head(repo_path, fallback_url=None):
+    """Fetch HEAD mặc định của upstream mà không hardcode nhánh main."""
+    res = subprocess.run(
+        ["git", "-C", repo_path, "fetch", "--depth", "1", "origin", "HEAD", "-q"],
+        capture_output=True,
+        check=False,
+    )
+    if res.returncode == 0:
+        return True
+    res = subprocess.run(
+        ["git", "-C", repo_path, "fetch", "--depth", "1", "origin", "-q"],
+        capture_output=True,
+        check=False,
+    )
+    if res.returncode == 0:
+        return True
+    if fallback_url:
+        subprocess.run(["git", "-C", repo_path, "remote", "set-url", "origin", fallback_url], capture_output=True, check=False)
+        res = subprocess.run(
+            ["git", "-C", repo_path, "fetch", "--depth", "1", "origin", "HEAD", "-q"],
+            capture_output=True,
+            check=False,
+        )
+        return res.returncode == 0
+    return False
+
 
 def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
     """
     Đảm bảo ComfyUI-Pixaroma luôn ở phiên bản mới nhất và đầy đủ nhất:
     1. Tự động cập nhật / clone từ upstream chính thức (ưu tiên GitHub, fallback GitLab).
-    2. Khôi phục Git tracking nếu node được phục hồi từ zip backup không có .git.
-    3. Đồng bộ toàn bộ 26+ workflow mẫu chính hãng vào workflows/Pixaroma/ với cơ chế:
-       - SHA256 & Filename deduplication: Tuyệt đối không trùng lặp.
-       - Không ghi đè lên các workflow cá nhân của người dùng.
-       - Không tạo file rác (%20, %2B, .tmp, file đuôi số _1).
-       - Giữ nguyên thư mục workflows trong git để git fetch/pull không bị xung đột.
+    2. Khôi phục Git tracking nếu node được phục hồi từ backup không có .git.
+    3. Chỉ báo has_changed=True khi cài mới hoặc HEAD thay đổi thực sự.
+    4. Đồng bộ an toàn workflow mẫu vào workflows/Pixaroma/ với SHA256 deduplication.
     """
     pixaroma_dir = os.path.join(custom_nodes_dir, "ComfyUI-Pixaroma")
     github_url = "https://github.com/pixaroma/comfyui-pixaroma.git"
@@ -134,19 +243,18 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
 
     has_changed = False
 
-    # 1. Cài đặt mới nếu chưa tồn tại
     if not os.path.exists(pixaroma_dir):
         print("  📥 [Pixaroma] Đang cài đặt ComfyUI-Pixaroma bản mới nhất từ upstream...")
         res = subprocess.run(
             ["git", "clone", "--depth", "1", "-q", github_url, pixaroma_dir],
             capture_output=True,
-            check=False
+            check=False,
         )
         if res.returncode != 0:
             res = subprocess.run(
                 ["git", "clone", "--depth", "1", "-q", gitlab_url, pixaroma_dir],
                 capture_output=True,
-                check=False
+                check=False,
             )
         if res.returncode == 0:
             has_changed = True
@@ -155,49 +263,40 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
             print("  ⚠️ [Pixaroma] Không thể kết nối để clone Pixaroma.")
             return False
 
-    # 2. Nếu đã tồn tại nhưng thiếu .git (do phục hồi từ zip backup) -> khôi phục tracking
     elif not os.path.exists(git_dir):
         print("  🔄 [Pixaroma] Khôi phục Git tracking để tự động đồng bộ bản mới nhất...")
         try:
-            subprocess.run(["git", "-C", pixaroma_dir, "init", "-q"], check=False)
-            subprocess.run(["git", "-C", pixaroma_dir, "remote", "add", "origin", github_url], check=False)
-            fetch_res = subprocess.run(
-                ["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"],
-                capture_output=True,
-                check=False
-            )
-            if fetch_res.returncode != 0:
-                subprocess.run(["git", "-C", pixaroma_dir, "remote", "set-url", "origin", gitlab_url], check=False)
-                subprocess.run(["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"], check=False)
-            subprocess.run(["git", "-C", pixaroma_dir, "reset", "--hard", "origin/main", "-q"], check=False)
-            has_changed = True
-            print("  ✅ [Pixaroma] Đã khôi phục tracking và cập nhật lên commit mới nhất thành công!")
+            subprocess.run(["git", "-C", pixaroma_dir, "init", "-q"], capture_output=True, check=False)
+            subprocess.run(["git", "-C", pixaroma_dir, "remote", "add", "origin", github_url], capture_output=True, check=False)
+            if _fetch_default_head(pixaroma_dir, fallback_url=gitlab_url):
+                reset_res = subprocess.run(
+                    ["git", "-C", pixaroma_dir, "reset", "--hard", "FETCH_HEAD", "-q"],
+                    capture_output=True,
+                    check=False,
+                )
+                if reset_res.returncode == 0:
+                    has_changed = True
+                    print("  ✅ [Pixaroma] Đã khôi phục tracking và cập nhật lên commit mới nhất thành công!")
         except Exception as e:
             print(f"  ⚠️ [Pixaroma] Ghi chú cập nhật git: {e}")
 
-    # 3. Nếu đã có .git -> đồng bộ thẳng lên HEAD mới nhất
     else:
         try:
-            fetch_res = subprocess.run(
-                ["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"],
-                capture_output=True,
-                check=False
-            )
-            if fetch_res.returncode != 0:
-                subprocess.run(["git", "-C", pixaroma_dir, "remote", "set-url", "origin", gitlab_url], check=False)
-                subprocess.run(["git", "-C", pixaroma_dir, "fetch", "--depth", "1", "origin", "main", "-q"], check=False)
-            reset_res = subprocess.run(
-                ["git", "-C", pixaroma_dir, "reset", "--hard", "origin/main", "-q"],
-                capture_output=True,
-                check=False
-            )
-            if reset_res.returncode == 0:
-                has_changed = True
-                print("  ✅ [Pixaroma] Đã đồng bộ phiên bản mới nhất từ upstream.")
+            old_head = _get_git_head(pixaroma_dir)
+            if _fetch_default_head(pixaroma_dir, fallback_url=gitlab_url):
+                reset_res = subprocess.run(
+                    ["git", "-C", pixaroma_dir, "reset", "--hard", "FETCH_HEAD", "-q"],
+                    capture_output=True,
+                    check=False,
+                )
+                if reset_res.returncode == 0:
+                    new_head = _get_git_head(pixaroma_dir)
+                    if not old_head or (new_head and new_head != old_head):
+                        has_changed = True
+                        print("  ✅ [Pixaroma] Đã đồng bộ phiên bản mới nhất từ upstream.")
         except Exception as e:
             print(f"  ⚠️ [Pixaroma] Ghi chú cập nhật: {e}")
 
-    # 4. Bảo toàn & Đồng bộ Workflows mẫu Pixaroma vào Google Drive (Chống trùng lặp & Chống file rác)
     if drive_default_workflows:
         os.makedirs(drive_default_workflows, exist_ok=True)
         target_pix_dir = os.path.join(drive_default_workflows, "Pixaroma")
@@ -210,19 +309,19 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
 
             for root, _, files in os.walk(drive_default_workflows):
                 for f in files:
-                    if f.endswith('.json'):
+                    if f.endswith(".json"):
                         fp = os.path.join(root, f)
                         try:
                             if os.path.getsize(fp) > 0:
                                 existing_filenames.add(f.lower())
-                                with open(fp, 'rb') as jf:
+                                with open(fp, "rb") as jf:
                                     existing_hashes.add(hashlib.sha256(jf.read()).hexdigest())
                         except Exception:
                             pass
 
             synced_count = 0
             for item in os.listdir(src_wf_dir):
-                if item.startswith('.') or item.endswith(('.tmp', '.temp', '.bak')):
+                if item.startswith(".") or item.endswith((".tmp", ".temp", ".bak")):
                     continue
                 src_item = os.path.join(src_wf_dir, item)
                 if not os.path.isfile(src_item):
@@ -230,23 +329,21 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
 
                 dst_item = os.path.join(target_pix_dir, item)
 
-                if item.endswith('.json'):
+                if item.endswith(".json"):
                     try:
-                        with open(src_item, 'rb') as f_in:
+                        with open(src_item, "rb") as f_in:
                             content = f_in.read()
                         h = hashlib.sha256(content).hexdigest()
-                        # Bỏ qua nếu nội dung hoặc tên file đã tồn tại (không trùng lặp, không sinh file _1)
                         if h in existing_hashes or item.lower() in existing_filenames:
                             continue
-                        with open(dst_item, 'wb') as f_out:
+                        with open(dst_item, "wb") as f_out:
                             f_out.write(content)
                         existing_hashes.add(h)
                         existing_filenames.add(item.lower())
                         synced_count += 1
 
-                        # Sao chép thumbnail ảnh đi kèm chính xác với workflow vừa nạp (không tạo ảnh mồ côi)
                         base_stem, _ = os.path.splitext(item)
-                        for ext in ('.jpg', '.jpeg', '.png', '.webp'):
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
                             thumb_src = os.path.join(src_wf_dir, f"{base_stem}{ext}")
                             thumb_dst = os.path.join(target_pix_dir, f"{base_stem}{ext}")
                             if os.path.exists(thumb_src) and not os.path.exists(thumb_dst):
@@ -268,27 +365,12 @@ def ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=None):
 
     return has_changed
 
-def _safe_print(msg):
-    """In log an toàn khi chạy đa luồng."""
-    with _PRINT_LOCK:
-        print(msg)
-
-def _get_git_head(repo_path):
-    """Trả về commit hash hiện tại của repo git, hoặc chuỗi rỗng nếu chưa có."""
-    res = subprocess.run(
-        ["git", "-C", repo_path, "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False
-    )
-    return res.stdout.strip() if res.returncode == 0 else ""
 
 def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, index=1, total=1):
     """Cài đặt hoặc cập nhật một Custom Node từ upstream chính thống."""
     if name == "ComfyUI-Pixaroma":
         _safe_print(f"  [{index}/{total}] 🚀 Tự động cập nhật ComfyUI-Pixaroma lên bản mới nhất...")
-        has_new = ensure_pixaroma_latest(custom_nodes_dir)
-        return has_new
+        return ensure_pixaroma_latest(custom_nodes_dir)
 
     node_path = os.path.join(custom_nodes_dir, name)
     has_new = False
@@ -298,7 +380,7 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
         res = subprocess.run(
             ["git", "clone", "--depth", "1", "--no-tags", "-q", git_url, node_path],
             capture_output=True,
-            check=False
+            check=False,
         )
         if res.returncode == 0:
             has_new = True
@@ -313,8 +395,7 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
             try:
                 subprocess.run(["git", "-C", node_path, "init", "-q"], capture_output=True, check=False)
                 subprocess.run(["git", "-C", node_path, "remote", "add", "origin", git_url], capture_output=True, check=False)
-                fetch_res = subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], capture_output=True, check=False)
-                if fetch_res.returncode == 0:
+                if _fetch_default_head(node_path):
                     subprocess.run(["git", "-C", node_path, "reset", "--hard", "FETCH_HEAD", "-q"], capture_output=True, check=False)
                     has_new = True
                     _safe_print(f"  [{index}/{total}] 🔄 {name} (Đã khôi phục tracking & cập nhật)")
@@ -324,8 +405,7 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
             try:
                 old_head = _get_git_head(node_path)
                 subprocess.run(["git", "-C", node_path, "remote", "set-url", "origin", git_url], capture_output=True, check=False)
-                fetch_res = subprocess.run(["git", "-C", node_path, "fetch", "--depth", "1", "origin", "-q"], capture_output=True, check=False)
-                if fetch_res.returncode == 0:
+                if _fetch_default_head(node_path):
                     subprocess.run(["git", "-C", node_path, "reset", "--hard", "FETCH_HEAD", "-q"], capture_output=True, check=False)
                     new_head = _get_git_head(node_path)
                     if new_head and new_head != old_head:
@@ -335,11 +415,12 @@ def install_or_update_node(name, git_url, custom_nodes_dir, update_nodes=True, i
                 pass
     return has_new
 
+
 def setup_all_custom_nodes(
     custom_nodes_dir,
     update_nodes=True,
     install_video_nodes=True,
-    drive_default_workflows=None
+    drive_default_workflows=None,
 ):
     """Cài đặt và đồng bộ song song toàn bộ Custom Nodes cần thiết."""
     nodes_config = load_default_nodes()
@@ -350,7 +431,6 @@ def setup_all_custom_nodes(
     if install_video_nodes:
         all_target_nodes.extend(video_nodes)
 
-    # Tự động đồng bộ tên thư mục chuẩn cho ComfyUI-Custom-Scripts
     old_cs = os.path.join(custom_nodes_dir, "comfyui-custom-scripts")
     new_cs = os.path.join(custom_nodes_dir, "ComfyUI-Custom-Scripts")
     if os.path.exists(old_cs) and not os.path.exists(new_cs):
@@ -373,7 +453,7 @@ def setup_all_custom_nodes(
                 custom_nodes_dir,
                 update_nodes,
                 i,
-                total
+                total,
             )
             for i, node in other_nodes
         ]
@@ -384,99 +464,204 @@ def setup_all_custom_nodes(
             except Exception:
                 pass
 
-    # Đảm bảo Pixaroma luôn ở bản mới nhất và workflows mẫu đồng bộ sạch sẽ, không trùng lặp
     if ensure_pixaroma_latest(custom_nodes_dir, drive_default_workflows=drive_default_workflows):
         has_any_new = True
 
-    # Áp dụng patch cho VHS sau khi đã reset/cập nhật xong
     patch_vhs_loadvideo(custom_nodes_dir)
-
     return has_any_new
 
-def create_compact_nodes_backup(custom_nodes_dir, backup_zip_path):
+
+def export_custom_nodes_manifest(custom_nodes_dir, manifest_path):
+    """Lưu danh sách remote URL & commit của các Custom Nodes trước khi strip .git."""
+    if not os.path.exists(custom_nodes_dir):
+        return {}
+    manifest = {}
+    for entry in sorted(os.scandir(custom_nodes_dir), key=lambda e: e.name.lower()):
+        if not entry.is_dir() or entry.name.startswith((".", "__")):
+            continue
+        git_dir = os.path.join(entry.path, ".git")
+        if os.path.exists(git_dir):
+            manifest[entry.name] = {
+                "url": _get_git_remote_url(entry.path),
+                "commit": _get_git_head(entry.path),
+            }
+        else:
+            manifest[entry.name] = {"url": "", "commit": ""}
+    try:
+        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+        tmp_manifest = manifest_path + ".tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_manifest, manifest_path)
+    except Exception:
+        pass
+    return manifest
+
+
+def _iter_backup_files(custom_nodes_dir):
+    """Duyệt file hợp lệ cần sao lưu, loại trừ .git, .venv, node_modules và file nặng > 50MB."""
+    for root, dirs, files in os.walk(custom_nodes_dir):
+        dirs[:] = [d for d in dirs if d not in _EXCLUDED_BACKUP_DIRS]
+        for file in files:
+            if file.endswith((".pyc", ".git", ".DS_Store")):
+                continue
+            full_path = os.path.join(root, file)
+            try:
+                if os.path.islink(full_path):
+                    continue
+                if os.path.getsize(full_path) > _MAX_BACKUP_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            yield full_path, os.path.relpath(full_path, custom_nodes_dir)
+
+
+def create_compact_nodes_backup(custom_nodes_dir, backup_path):
     """
-    Tạo bản sao lưu nén thông minh cho custom nodes, tự động bỏ qua .git và __pycache__.
+    Tạo bản sao lưu nén thông minh (.tar.zst đa luồng nếu có zstd, ngược lại .zip).
+    Ghi atomic qua file .tmp và xuất kèm custom_nodes_manifest.json.
     """
     try:
-        temp_local_zip = "/content/custom_nodes_backup_temp.zip"
-        if os.path.exists(temp_local_zip):
-            os.remove(temp_local_zip)
+        backup_dir = os.path.dirname(backup_path)
+        os.makedirs(backup_dir, exist_ok=True)
+        export_custom_nodes_manifest(
+            custom_nodes_dir,
+            os.path.join(backup_dir, "custom_nodes_manifest.json"),
+        )
 
-        with zipfile.ZipFile(temp_local_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(custom_nodes_dir):
-                # Bỏ qua thư mục .git và __pycache__ để zip nhẹ hơn 80%
-                dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', '.pytest_cache')]
-                for file in files:
-                    if file.endswith(('.pyc', '.git', '.DS_Store')):
-                        continue
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, custom_nodes_dir)
-                    zipf.write(full_path, rel_path)
+        use_zst = backup_path.endswith(".tar.zst") and _supports_zstd()
+        suffix = ".tar.zst" if use_zst else ".zip"
+        fd, temp_local_archive = tempfile.mkstemp(prefix="comfycolab_backup_", suffix=suffix)
+        os.close(fd)
 
-        os.makedirs(os.path.dirname(backup_zip_path), exist_ok=True)
-        shutil.copy2(temp_local_zip, backup_zip_path)
-        if os.path.exists(temp_local_zip):
-            os.remove(temp_local_zip)
-        size_mb = round(os.path.getsize(backup_zip_path) / (1024 * 1024), 1)
+        try:
+            if use_zst:
+                proc = subprocess.Popen(
+                    ["zstd", "-T0", "-3", "-q", "-f", "-o", temp_local_archive],
+                    stdin=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                try:
+                    with tarfile.open(fileobj=proc.stdin, mode="w|") as tf:
+                        for full_path, rel_path in _iter_backup_files(custom_nodes_dir):
+                            tf.add(full_path, arcname=rel_path)
+                finally:
+                    if proc.stdin:
+                        proc.stdin.close()
+                stderr_bytes = proc.stderr.read() if proc.stderr else b""
+                if proc.stderr:
+                    proc.stderr.close()
+                if proc.wait() != 0:
+                    raise RuntimeError(stderr_bytes.decode("utf-8", errors="ignore"))
+            else:
+                with zipfile.ZipFile(temp_local_archive, "w", zipfile.ZIP_DEFLATED) as zipf:
+                    for full_path, rel_path in _iter_backup_files(custom_nodes_dir):
+                        zipf.write(full_path, rel_path)
+
+            tmp_drive_dst = backup_path + ".tmp"
+            shutil.copy2(temp_local_archive, tmp_drive_dst)
+            os.replace(tmp_drive_dst, backup_path)
+        finally:
+            if os.path.exists(temp_local_archive):
+                os.remove(temp_local_archive)
+
+        size_mb = round(os.path.getsize(backup_path) / (1024 * 1024), 1)
         print(f"  \033[92m💾 Đã cập nhật file sao lưu Custom Nodes lên Google Drive ({size_mb} MB)!\033[0m")
         return True
     except Exception as e:
         print(f"  ⚠️ Lỗi tạo bản sao lưu Custom Nodes: {e}")
         return False
 
+
 def filter_safe_requirements(lines):
     """Lọc bỏ các gói bảo vệ (torch, transformers...) mà không làm bẩn file requirements.txt gốc."""
     cleaned = []
     for l in lines:
         line_strip = l.strip()
-        if not line_strip or line_strip.startswith('#') or line_strip.startswith('-'):
+        if not line_strip or line_strip.startswith("#") or line_strip.startswith("-"):
             continue
         pkg = (
-            line_strip.split('==')[0]
-            .split('>=')[0]
-            .split('<=')[0]
-            .split('>')[0]
-            .split('<')[0]
-            .split('~=')[0]
-            .split('[')[0]
+            line_strip.split("==")[0]
+            .split(">=")[0]
+            .split("<=")[0]
+            .split(">")[0]
+            .split("<")[0]
+            .split("~=")[0]
+            .split("[")[0]
             .strip()
             .lower()
         )
-        if pkg and pkg not in PROTECTED_PACKAGES and not pkg.startswith('nvidia-'):
+        if pkg and pkg not in PROTECTED_PACKAGES and not pkg.startswith("nvidia-"):
             cleaned.append(line_strip + "\n")
     return cleaned
 
+
+def _compute_requirements_stamp(custom_nodes_dir):
+    """Tạo hash đại diện cho toàn bộ requirements.txt và install.py trong custom_nodes_dir."""
+    h = hashlib.sha256()
+    for root, dirs, files in sorted(os.walk(custom_nodes_dir)):
+        dirs[:] = sorted([d for d in dirs if d not in (".git", "__pycache__")])
+        for fname in sorted(files):
+            if fname in ("requirements.txt", "install.py"):
+                fp = os.path.join(root, fname)
+                try:
+                    st = os.stat(fp)
+                    h.update(f"{os.path.relpath(fp, custom_nodes_dir)}:{st.st_size}:{int(st.st_mtime)}\n".encode("utf-8"))
+                except OSError:
+                    pass
+    return h.hexdigest()
+
+
 def install_custom_nodes_requirements(custom_nodes_dir):
-    """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv (không ghi đè repo git)."""
+    """Quét và cài đặt các phụ thuộc requirements.txt của custom nodes bằng uv (có stamp cache)."""
     print("\n[8/10] 🛠️ Cài đặt đồng thời thư viện cho SeedVR2 & tất cả các Custom Nodes...")
     cuda_index = get_pytorch_cuda_index_url()
 
-    # Cài các gói bắt buộc cho SeedVR2, Impact-Pack, RemBG & Video
-    subprocess.run([
-        "uv", "pip", "install", "--system",
-        "--extra-index-url", cuda_index,
-        "rotary-embedding-torch>=0.5.3",
-        "omegaconf>=2.3.0",
-        "einops",
-        "gguf",
-        "diffusers>=0.33.1",
-        "peft>=0.17.0",
-        "piexif",
-        "segment-anything",
-        "scikit-image",
-        "kornia",
-        "ultralytics",
-        "transparent-background",
-        "imageio-ffmpeg",
-        "torchsde"
-    ], capture_output=True, check=False)
+    stamp_key = hashlib.sha1(os.path.abspath(custom_nodes_dir).encode("utf-8")).hexdigest()[:12]
+    stamp_file = os.path.join(tempfile.gettempdir(), f"comfycolab_reqs_stamp_{stamp_key}.json")
+    current_stamp = _compute_requirements_stamp(custom_nodes_dir) if os.path.exists(custom_nodes_dir) else ""
+    core_specs_ok = all(
+        importlib.util.find_spec(mod) is not None
+        for mod in ("torchsde", "piexif", "ultralytics", "transparent_background", "imageio_ffmpeg")
+    )
+    if core_specs_ok and os.path.exists(stamp_file):
+        try:
+            with open(stamp_file, "r", encoding="utf-8") as sf:
+                if json.load(sf).get("stamp") == current_stamp:
+                    print("  ⚡ Thư viện & requirements của Custom Nodes không thay đổi, bỏ qua cài lại.")
+                    return
+        except Exception:
+            pass
+
+    subprocess.run(
+        [
+            "uv", "pip", "install", "--system",
+            "--extra-index-url", cuda_index,
+            "rotary-embedding-torch>=0.5.3",
+            "omegaconf>=2.3.0",
+            "einops",
+            "gguf",
+            "diffusers>=0.33.1",
+            "peft>=0.17.0",
+            "piexif",
+            "segment-anything",
+            "scikit-image",
+            "kornia",
+            "ultralytics",
+            "transparent-background",
+            "imageio-ffmpeg",
+            "torchsde",
+        ],
+        capture_output=True,
+        check=False,
+    )
 
     tmp_req_dir = tempfile.mkdtemp(prefix="comfycolab_reqs_")
     temp_req_files = []
     try:
         idx = 0
         for root, dirs, files in os.walk(custom_nodes_dir):
-            dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__')]
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__")]
             if "requirements.txt" in files:
                 req_path = os.path.join(root, "requirements.txt")
                 node_label = os.path.relpath(root, custom_nodes_dir)
@@ -502,7 +687,7 @@ def install_custom_nodes_requirements(custom_nodes_dir):
                 ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", cuda_index] + batch_args,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
             )
             if batch_res.returncode == 0:
                 print("  ✅ Đã cài đặt hoàn tất mọi thư viện bổ trợ cho Custom Nodes.")
@@ -513,7 +698,7 @@ def install_custom_nodes_requirements(custom_nodes_dir):
                         ["uv", "pip", "install", "--compile-bytecode", "--system", "--extra-index-url", cuda_index, "-r", tp],
                         capture_output=True,
                         text=True,
-                        check=False
+                        check=False,
                     )
                     if single_res.returncode != 0:
                         err_msg = (single_res.stderr or "").strip().splitlines()[-1:] or ["unknown error"]
@@ -524,7 +709,6 @@ def install_custom_nodes_requirements(custom_nodes_dir):
     finally:
         shutil.rmtree(tmp_req_dir, ignore_errors=True)
 
-    # Tự động thực thi install.py nếu custom node cấp 1 có file cài đặt riêng (như Impact-Pack)
     if os.path.exists(custom_nodes_dir):
         for entry in os.scandir(custom_nodes_dir):
             if entry.is_dir():
@@ -532,6 +716,24 @@ def install_custom_nodes_requirements(custom_nodes_dir):
                 if os.path.isfile(inst_script):
                     try:
                         print(f"  ⚙️ Đang thực thi cài đặt chuyên biệt cho node '{entry.name}'...")
-                        subprocess.run([sys.executable, inst_script], cwd=entry.path, capture_output=True, check=False)
+                        inst_res = subprocess.run(
+                            [sys.executable, inst_script],
+                            cwd=entry.path,
+                            capture_output=True,
+                            text=True,
+                            timeout=180,
+                            check=False,
+                        )
+                        if inst_res.returncode != 0:
+                            err_tail = (inst_res.stderr or "").strip().splitlines()[-1:] or ["exit != 0"]
+                            print(f"    ⚠️ [{entry.name}/install.py] Lưu ý: {err_tail[0][:120]}")
+                    except subprocess.TimeoutExpired:
+                        print(f"    ⚠️ [{entry.name}/install.py] Quá thời gian 180s, bỏ qua.")
                     except Exception:
                         pass
+
+    try:
+        with open(stamp_file, "w", encoding="utf-8") as sf:
+            json.dump({"stamp": current_stamp}, sf)
+    except Exception:
+        pass

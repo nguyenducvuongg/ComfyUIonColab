@@ -55,6 +55,16 @@ def setup_model_symlinks(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_CO
         except Exception as e:
             print(f"⚠️ Không thể tạo symlink cho {sf}: {e}")
 
+    # Tạo alias chữ thường cục bộ trong ComfyUI/models/seedvr2 -> Drive/models/SEEDVR2 (tránh trùng thư mục trên Drive)
+    try:
+        _ensure_symlink(
+            os.path.join(comfyui_dir, "models", "seedvr2"),
+            os.path.join(data_dir, "models", "SEEDVR2"),
+            ensure_target_dir=False,
+        )
+    except Exception:
+        pass
+
 def _flatten_directory_safely(base_dir, excluded_prefixes=()):
     """
     Di chuyển an toàn toàn bộ tệp trong thư mục con ra thẳng base_dir.
@@ -134,19 +144,21 @@ def migrate_and_flatten_storage(in_dir, out_dir):
 
     # 3. Đồng bộ ban đầu từ output sang input nếu input còn trống
     if os.path.exists(out_dir) and os.path.exists(in_dir):
-        synced_initial = 0
-        for f in os.listdir(out_dir):
-            if not f.startswith('.'):
-                src_f = os.path.join(out_dir, f)
-                dst_f = os.path.join(in_dir, f)
-                if os.path.isfile(src_f) and not os.path.exists(dst_f):
-                    try:
-                        shutil.copy2(src_f, dst_f)
-                        synced_initial += 1
-                    except Exception:
-                        pass
-        if synced_initial > 0:
-            print(f"✅ Đã đồng bộ {synced_initial} tệp đầu ra cũ sang Input để sẵn sàng tái sử dụng.")
+        existing_inputs = [f for f in os.listdir(in_dir) if not f.startswith('.')]
+        if not existing_inputs:
+            synced_initial = 0
+            for f in os.listdir(out_dir):
+                if not f.startswith('.'):
+                    src_f = os.path.join(out_dir, f)
+                    dst_f = os.path.join(in_dir, f)
+                    if os.path.isfile(src_f) and not os.path.exists(dst_f):
+                        try:
+                            shutil.copy2(src_f, dst_f)
+                            synced_initial += 1
+                        except Exception:
+                            pass
+            if synced_initial > 0:
+                print(f"✅ Đã đồng bộ {synced_initial} tệp đầu ra cũ sang Input để sẵn sàng tái sử dụng.")
 
 def setup_io_directories(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAULT_COMFYUI_DIR):
     """Thiết lập các liên kết symlink chuẩn cho thư mục input và output."""
@@ -207,6 +219,7 @@ def validate_and_heal_symlinks(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFA
         for sf in load_model_subfolders()
     ]
     link_pairs.extend([
+        (os.path.join(comfyui_dir, "models", "seedvr2"), os.path.join(data_dir, "models", "SEEDVR2")),
         (os.path.join(comfyui_dir, "input"), os.path.join(data_dir, "input")),
         (os.path.join(comfyui_dir, "output"), os.path.join(data_dir, "output")),
         (os.path.join(comfyui_dir, "user"), drive_user),

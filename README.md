@@ -7,9 +7,9 @@
 [![GitHub License](https://img.shields.io/github/license/nguyenducvuongg/ComfyUIonColab)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/nguyenducvuongg/ComfyUIonColab?style=social)](https://github.com/nguyenducvuongg/ComfyUIonColab)
 
-**Giải pháp chạy ComfyUI tối ưu, ổn định và nhanh nhất trên Google Colab với tích hợp Google Drive toàn diện.**
+**Giải pháp chạy ComfyUI tối ưu, ổn định và nhanh nhất trên Google Colab với tích hợp Google Drive toàn diện và cổng SSH-Tailscale chạy thẳng về máy cá nhân.**
 
-[Tính Năng Nổi Bật](#-tính-năng-nổi-bật) • [Khởi Chạy Nhanh](#-hướng-dẫn-khởi-chạy) • [Cấu Trúc Thư Mục](#-cấu-trúc-thư-mục-lưu-trữ-trên-google-drive) • [Danh Sách Nodes](#-danh-sách-custom-nodes-mặc-định) • [English Guide](#-english-guide)
+[Tính Năng Nổi Bật](#-tính-năng-nổi-bật) • [Khởi Chạy Nhanh](#-hướng-dẫn-khởi-chạy) • [Kết Nối SSH-Tailscale](#-kết-nối-ssh-tailscale-chạy-thẳng-về-máy-cá-nhân) • [Cấu Trúc Thư Mục](#-cấu-trúc-thư-mục-lưu-trữ-trên-google-drive) • [English Guide](#-english-guide)
 
 </div>
 
@@ -17,118 +17,105 @@
 
 ## 🌟 Tính Năng Nổi Bật
 
-- ⚡ **Khởi Động Siêu Tốc với `uv` & `aria2`**: Tăng tốc cài đặt thư viện Python gấp 10-50 lần so với pip truyền thống.
-- 🧠 **Tối Ưu Hóa VRAM & RAM (Chống OOM & Tràn Bộ Nhớ)**: Tự động cấu hình `PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"` ngăn chặn phân mảnh VRAM cho các mô hình dung lượng lớn (Flux.1, Wan 2.1, SDXL) và kích hoạt bộ quản lý bộ nhớ **TCMalloc** (`google-perftools`) hạn chế triệt để hiện tượng rò rỉ RAM trên Colab.
-- 🔒 **Đường Truyền Mặc Định: Colab-Proxy Siêu Tốc (0.05s)**: Tự động khởi tạo ngay trên luồng chính với cơ chế kiểm tra và tự phục hồi toàn bộ hệ thống Symlinks (Health-Check), kết nối trực tiếp an toàn từ tài khoản Google không giới hạn băng thông (kèm tùy chọn Cloudflare / Pinggy).
-- 📜 **Live Log Streaming Thời Gian Thực**: Trực tiếp hiển thị chi tiết log khởi động, nạp mô hình, tiến trình render và kết nối WebSocket ngay tại cell Colab để dễ dàng theo dõi và xử lý sự cố.
-- 💾 **Smart Live Backup (~3-5 giây)**: Tự động khôi phục toàn bộ Custom Nodes từ bản sao lưu nén trên Google Drive; tự động phát hiện và sao lưu ngầm các node mới cài từ ComfyUI-Manager mà không làm gián đoạn trải nghiệm.
-- 📁 **Lưu Trữ Phẳng An Toàn Tuyệt Đối (Collision-Safe Storage)**: Gom tệp chuẩn phẳng cho thư mục `input/` và `output/` giúp xem trước (Preview) video/ảnh mượt mà 100%, tự động tạo hậu tố `_1, _2...` nếu trùng tên tệp trong thư mục con để tuyệt đối không làm mất tệp của người dùng.
-- 🔄 **Động Cơ Đồng Bộ 1 Chiều Output ➔ Input**: Tự động chuyển hình ảnh/video kết xuất từ `output/` sang `input/` thời gian thực, giúp kết nối chuỗi workflow (chaining) mà không cần tốn công tải lại tệp.
-- 🎨 **Tự Động Cập Nhật Pixaroma Mới Nhất & Thư Viện Workflow Mẫu Chống Trùng Lặp (`Alt + W`)**: Luôn tự động kéo bản mới nhất của ComfyUI-Pixaroma từ upstream (GitHub/GitLab), đồng bộ an toàn 26+ workflow mẫu chính hãng vào thư mục riêng `workflows/Pixaroma/` với cơ chế chống trùng lặp SHA256 và dọn sạch file rác (%20, %2B, 0-byte).
-- 🤖 **Hỗ Trợ Toàn Diện Các Mô Hình AI Mới Nhất**:
-  - **Diffusion & Text-to-Image**: Flux.1, SDXL, SD 1.5, Sana, Playground, PixArt...
-  - **Video Generation**: Wan 2.1, HunyuanVideo, LTX-Video, CogVideoX, AnimateDiff...
-  - **Video Upscaling & Depth**: SeedVR2, Video Depth Anything, Frame Interpolation...
-  - **Background Removal**: RMBG 1.4/2.0, BiRefNet, InspyreNet, MODNet, RemBG...
-  - **Control & Face**: ControlNet, IP-Adapter, InsightFace, PhotoMaker, FaceRestore...
-- 📥 **ComfyUI Model Downloader Chuyên Dụng**: Tải mô hình đa luồng tốc độ cao từ Civitai (kèm API Key) và HuggingFace (kèm Token) trực tiếp vào Google Drive với cơ chế **Resume** thông minh khi mạng gián đoạn.
+- ⚡ **Khởi Động Siêu Tốc với `uv`, `aria2` & `zstd`**: Tăng tốc cài đặt thư viện Python 10-50 lần, bỏ qua bước cài lại khi công cụ đã sẵn sàng, nén/giải nén backup bằng `.tar.zst` đa luồng.
+- 🧠 **Tối Ưu Hóa VRAM & RAM Kernel (Chống OOM & Tràn Bộ Nhớ)**: Cấu hình `PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"`, kích hoạt **TCMalloc** (`google-perftools`), kiểm tra CUDA/Transformers qua subprocess để tiết kiệm ~1.5 GB RAM cho kernel Colab.
+- 🔐 **Đa Đường Truyền Bảo Mật: Colab-Proxy / SSH-Tailscale / Cloudflare**:
+  - **Colab-Proxy** *(Mặc định)*: Kết nối trực tiếp qua tài khoản Google.
+  - **SSH-Tailscale** *(Mới)*: Mở cổng SSH mã hóa qua mạng riêng Tailscale WireGuard, chuyển tiếp thẳng ComfyUI về `http://127.0.0.1:8188` trên máy cá nhân (hỗ trợ cả Terminal, SFTP/rsync, VS Code / Antigravity Remote-SSH), mọi Models/Input/Output/Workflow vẫn lưu trực tiếp trên Google Drive.
+  - **Cloudflare Quick Tunnel**: Tạo link công khai dự phòng qua `cloudflared` (tích hợp drain pipe chống treo).
+- 📜 **Live Log Streaming Thời Gian Thực**: Stream log theo chunk hỗ trợ thanh tiến trình `tqdm` (`it/s`), kết nối WebSocket và quá trình nạp mô hình.
+- 💾 **Smart Live Backup (.tar.zst + Manifest)**: Tự động khôi phục Custom Nodes từ Google Drive; phát hiện node mới cài từ ComfyUI-Manager, lưu kèm `custom_nodes_manifest.json` và tự động bỏ qua `.venv`/`node_modules`/file nặng >50 MB.
+- 📁 **Lưu Trữ Phẳng An Toàn Tuyệt Đối (Collision-Safe Storage)**: Gom tệp chuẩn phẳng cho `input/` và `output/`, giữ nguyên mọi tệp trên Google Drive `MyDrive/ComfyUI_Data/`.
+- 🔄 **Động Cơ Đồng Bộ 1 Chiều Output ➔ Input**: Tự động chuyển ảnh/video kết xuất từ `output/` sang `input/` thời gian thực.
+- 🎨 **Tự Động Cập Nhật Pixaroma Mới Nhất & Thư Viện Workflow Mẫu Chống Trùng Lặp (`Alt + W`)**: Đồng bộ 26+ workflow mẫu chính hãng vào `workflows/Pixaroma/` bằng SHA256 deduplication.
+- 📥 **ComfyUI Model Downloader Chuyên Dụng**: Tải mô hình đa luồng từ Civitai (hỗ trợ API Key & Colab Secrets, che token khỏi log) và HuggingFace (hỗ trợ Token & Resume).
 
 ---
 
 ## 🚀 Hướng Dẫn Khởi Chạy
 
 ### 1. Khởi Chạy ComfyUI Chính
-Nhấn vào nút bên dưới để mở sổ tay trên Google Colab:
-
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nguyenducvuongg/ComfyUIonColab/blob/main/ComfyUI_Colab_Ultra.ipynb)
 
-1. Chọn môi trường GPU: Vào menu **Runtime** ➔ **Change runtime type** ➔ Chọn **T4 GPU** (hoặc A100 / L4 nếu có Colab Pro).
-2. Chạy **Bước 1**: Kết nối Google Drive, khởi tạo thư mục và cài đặt môi trường.
-3. Chạy **Bước 2**: Khởi chạy ComfyUI (Mặc định đường truyền là **Colab-Proxy**, click vào link xuất hiện để mở giao diện).
+1. Chọn môi trường GPU: **Runtime** ➔ **Change runtime type** ➔ **T4 GPU** (hoặc L4 / A100).
+2. Chạy **Bước 1**: Kết nối Google Drive, cài đặt môi trường và khôi phục Custom Nodes.
+3. Chạy **Bước 2**: Chọn `Tunnel_Method` (`Colab-Proxy`, `SSH-Tailscale`, hoặc `Cloudflare`) và khởi động ComfyUI.
 
 ### 2. Tải Mô Hình AI Tốc Độ Cao
-Nhấn vào nút bên dưới để mở công cụ tải mô hình:
-
 [![Open Model Downloader](https://img.shields.io/badge/Colab-Model_Downloader-orange?logo=google-colab)](https://colab.research.google.com/github/nguyenducvuongg/ComfyUIonColab/blob/main/ComfyUI_Model_Downloader.ipynb)
 
-- **Chế độ Single (Tải đơn lẻ)**: Dán URL, chọn loại model (Checkpoint, LoRA, VAE, Background Removal...) và bấm chạy.
-- **Chế độ Batch (Tải hàng loạt)**: Dán danh sách nhiều link theo cú pháp `[tên_thư_mục]` và bấm bắt đầu tải.
+---
+
+## 🔐 Kết Nối SSH-Tailscale (Chạy Thẳng Về Máy Cá Nhân)
+
+Chế độ **SSH-Tailscale** chạy ComfyUI trên GPU của Google Colab nhưng forward cổng thẳng về **`http://127.0.0.1:8188`** trên máy cá nhân (macOS / Windows / Linux) qua mạng riêng WireGuard:
+- **0đ, không cần mở port router, không cần tên miền riêng**.
+- **Toàn bộ Models, Input, Output, Workflows vẫn đọc/ghi trực tiếp trên Google Drive** (`MyDrive/ComfyUI_Data/`).
+- **Bảo mật tuyệt đối**: Mặc định `Local_Only_Bind = True` khiến ComfyUI chỉ lắng nghe `127.0.0.1:8188` trên Colab và `sshd` chỉ chấp nhận SSH Key trên `127.0.0.1:2222`.
+
+### Thiết lập 1 lần duy nhất
+1. Cài app **Tailscale** trên máy cá nhân và đăng nhập tài khoản Tailscale.
+2. Vào [Tailscale Admin Console ➔ Settings ➔ Keys](https://login.tailscale.com/admin/settings/keys) tạo 1 **Auth Key** (bật **Reusable** + **Ephemeral**).
+3. Dán key đó vào **Colab Secrets** với tên `TAILSCALE_AUTHKEY` (khuyên dùng) hoặc nhập trực tiếp vào ô `Tailscale_Auth_Key` ở Bước 2 (hệ thống tự lưu lại vào Drive).
+4. *(Tùy chọn)* Dán nội dung file `~/.ssh/id_ed25519.pub` của máy bạn vào `SSH_Public_Key` hoặc Colab Secret `SSH_PUBLIC_KEY`. Nếu bỏ trống, hệ thống sẽ tự tạo cặp key `colab_ssh_key` trên Drive (`MyDrive/ComfyUI_Data/config/`).
+
+### Kết nối từ máy cá nhân
+Sau khi Bước 2 trên Colab báo **`CỔNG SSH-TAILSCALE ĐÃ SẴN SÀNG`**:
+
+- **Cách 1 (Khuyên dùng — 1-click auto-reconnect + tự mở trình duyệt)**:
+  ```bash
+  python3 scripts/local_connect.py
+  ```
+  *Nếu muốn tự động kéo luôn ảnh/video vừa render từ Google Drive `output/` trên Colab về thư mục máy cá nhân:*
+  ```bash
+  python3 scripts/local_connect.py --sync-output ~/ComfyUI_Outputs
+  ```
+- **Cách 2 (Chạy lệnh SSH trực tiếp hiển thị trên cell Colab)**:
+  ```bash
+  ssh -N -L 127.0.0.1:8188:127.0.0.1:8188 -p 2222 root@<TAILSCALE_IP_OR_HOST>
+  ```
+- Sau đó mở trình duyệt trên máy cá nhân tại **`http://127.0.0.1:8188`**.
+- Để lấy cấu hình cho **VS Code / Antigravity / Cursor Remote-SSH**, chạy:
+  ```bash
+  python3 scripts/local_connect.py --print-ssh-config
+  ```
 
 ---
 
 ## 📁 Cấu Trúc Thư Mục Lưu Trữ Trên Google Drive
 
-Dữ liệu của bạn được lưu trữ vĩnh viễn và ngăn nắp tại `MyDrive/ComfyUI_Data/`:
+Dữ liệu của bạn được lưu trữ vĩnh viễn tại `MyDrive/ComfyUI_Data/`:
 
 ```text
 ComfyUI_Data/
 ├── backup/
-│   └── custom_nodes_backup.zip     # Bản sao lưu nén Custom Nodes siêu tốc
+│   ├── custom_nodes_backup.tar.zst # Bản sao lưu Zstandard đa luồng (tương thích ngược .zip)
+│   └── custom_nodes_manifest.json  # Lưu remote URL & commit hash của các node đã cài
 ├── config/
-│   ├── tokens.json                 # Lưu Civitai API Key & HuggingFace Token
+│   ├── tokens.json                 # Civitai Key, HF Token & Tailscale Auth Key
+│   ├── authorized_keys             # SSH Public Keys được phép kết nối
+│   ├── ssh_endpoint.json           # Thông tin Tailscale IP / Host / Port cho local_connect.py
 │   └── batch_links.txt             # Danh sách tải mô hình hàng loạt
 ├── input/                          # Thư mục đầu vào (ảnh, video, audio)
-├── output/                         # Thư mục kết xuất hình ảnh & video
+├── output/                         # Thư mục kết xuất hình ảnh & video (lưu trực tiếp lên Drive)
 ├── user/
 │   └── default/
 │       ├── comfy.settings.json     # Cấu hình giao diện (Locale: en)
 │       └── workflows/              # Toàn bộ file workflow JSON lưu trữ tại đây
-└── models/
-    ├── checkpoints/                # SD1.5, SDXL, Flux checkpoints
-    ├── loras/                      # LoRA weights
-    ├── vae/                        # VAE models
-    ├── controlnet/                 # ControlNet models
-    ├── diffusion_models/           # UNet / DiT models (Wan, Hunyuan, Flux)
-    ├── text_encoders/              # T5, CLIP text encoders
-    ├── upscale_models/             # RealESRGAN, UltraSharp...
-    ├── animatediff_models/         # Motion modules cho AnimateDiff
-    ├── videodepthanything/         # Model Video Depth Anything
-    ├── SEEDVR2/                    # Model SeedVR2 Video Upscaler
-    ├── background_removal/         # Model xóa phông AI (RMBG, BiRefNet...)
-    └── ipadapter/                  # IP-Adapter models
+└── models/                         # 37 danh mục thư mục model AI chuẩn hóa
 ```
-
----
-
-## 📦 Danh Sách Custom Nodes Mặc Định
-
-Hệ thống được tích hợp sẵn bộ Custom Nodes mạnh mẽ và ổn định nhất từ upstream chính thống:
-
-| Node | Mô Tả |
-| :--- | :--- |
-| **ComfyUI-Manager** | Trình quản lý cài đặt node và model trực tiếp trên giao diện |
-| **ComfyUI-Impact-Pack** | Bộ công cụ dò tìm khuôn mặt, chi tiết và tăng cường chất lượng |
-| **ComfyUI-Custom-Scripts** | Tiện ích nâng cao UX, xem trước ảnh, lưu workflow |
-| **ComfyUI-Crystools** | Giám sát tài nguyên GPU, VRAM, RAM, CPU thời gian thực trên thanh tiêu đề |
-| **ComfyUI-Pixaroma** | Thư viện và trình quản lý workflow chuyên nghiệp (`Alt + W`) |
-| **rgthree-comfy** | Bộ node tối ưu dây nối, switch, mute, rerun thông minh |
-| **ComfyUI-SeedVR2_VideoUpscaler** | Siêu phân giải và phục hồi video AI chất lượng cao |
-| **ComfyUI-Krea2T & Krea2Edit** | Bộ công cụ tăng cường chi tiết và chỉnh sửa ảnh phong cách Krea |
-| **ComfyUI-VideoHelperSuite (VHS)** | Bộ công cụ nạp, kết xuất và xử lý video toàn diện |
-| **ComfyUI-AnimateDiff-Evolved** | Tạo hoạt ảnh và chuyển động mượt mà |
-| **ComfyUI-Advanced-ControlNet** | Điều khiển cấu trúc, tư thế chi tiết nâng cao |
-| **ComfyUI-Video-Depth-Anything** | Trích xuất bản đồ độ sâu video thời gian thực |
-| **ComfyUI-IPAdapter_plus** | Áp dụng phong cách và tham chiếu hình ảnh |
-| **comfyui_controlnet_aux** | Bộ tiền xử lý ControlNet (OpenPose, Canny, Depth, LineArt...) |
-| **ComfyUI-Inspyrenet-Rembg** | Xóa nền và tách phông ảnh/video AI |
 
 ---
 
 ## 🌐 English Guide
 
 ### Quick Start
-1. Open the notebook in Google Colab using the **Open in Colab** badge above.
-2. Ensure GPU runtime is selected: **Runtime** ➔ **Change runtime type** ➔ **T4 GPU** (or better).
-3. Run **Step 1** to mount Google Drive, install dependencies, and restore custom nodes.
-4. Run **Step 2** to launch ComfyUI with **Colab-Proxy** (default) or Cloudflare tunnel.
-5. Click the generated URL to access your ComfyUI workspace.
-
-### Key Highlights
-- **Engineered with `uv`**: Ultra-fast dependency resolution and setup.
-- **Smart Live Backup**: Restores custom nodes in 3-5 seconds and backs up new nodes in background.
-- **Bi-directional Pixaroma Sync**: Seamlessly synchronize your custom workflows via Google Drive.
-- **Live Output-to-Input Daemon**: Auto-syncs rendered outputs to inputs for effortless chaining.
-- **Modern AI Architectures Supported**: Wan 2.1, HunyuanVideo, Flux, SDXL, SeedVR2, RMBG, BiRefNet.
+1. Open `ComfyUI_Colab_Ultra.ipynb` in Google Colab and select a GPU runtime (`T4`, `L4`, or `A100`).
+2. Run **Step 1** to mount Google Drive, install dependencies with `uv`, and restore custom nodes (`.tar.zst` / `.zip`).
+3. Run **Step 2** and choose:
+   - **`Colab-Proxy`** for instant browser access inside your Google session.
+   - **`SSH-Tailscale`** to tunnel ComfyUI directly to `http://127.0.0.1:8188` on your personal machine (`python3 scripts/local_connect.py`), with persistent Google Drive storage for models, inputs, outputs, and workflows.
+   - **`Cloudflare`** for a temporary public tunnel URL.
 
 ---
 

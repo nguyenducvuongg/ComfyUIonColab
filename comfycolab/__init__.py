@@ -8,7 +8,9 @@ import sys
 from .config import (
     DEFAULT_COMFYUI_DIR,
     DEFAULT_DRIVE_DATA_DIR,
-    DEFAULT_LOCAL_DATA_DIR
+    DEFAULT_LOCAL_DATA_DIR,
+    DEFAULT_SSH_PORT,
+    DEFAULT_TAILSCALE_HOSTNAME,
 )
 from .environment import (
     setup_timezone,
@@ -95,7 +97,7 @@ def launch_setup(
 
     # 6. Khôi phục Custom Nodes từ bản sao lưu
     custom_nodes_dir = os.path.join(comfyui_dir, "custom_nodes")
-    restored, backup_zip = restore_custom_nodes_backup(ACTIVE_DATA_DIR, custom_nodes_dir, force_reinstall)
+    restored, backup_archive = restore_custom_nodes_backup(ACTIVE_DATA_DIR, custom_nodes_dir, force_reinstall)
 
     # Đồng bộ / cài đặt các Custom Nodes chính thống
     has_new_nodes = setup_all_custom_nodes(
@@ -107,15 +109,15 @@ def launch_setup(
 
     # 7. Cập nhật / tạo bản sao lưu Smart Live Backup
     print("\n[7/10] 💾 Kiểm tra và đồng bộ bản sao lưu Custom Nodes...")
-    if use_backup and (not restored or has_new_nodes or force_reinstall):
+    if use_backup and (not restored or has_new_nodes or force_reinstall or not os.path.exists(backup_archive)):
         print("  💾 Đang nén và cập nhật bản sao lưu Custom Nodes siêu tốc lên Drive...")
-        create_compact_nodes_backup(custom_nodes_dir, backup_zip)
+        create_compact_nodes_backup(custom_nodes_dir, backup_archive)
     else:
         print("  ✅ Bản sao lưu Custom Nodes trên Google Drive đã ở trạng thái mới nhất.")
 
     # Kích hoạt daemon Smart Live Backup cho Custom Nodes
     if use_backup:
-        start_custom_nodes_backup_daemon(custom_nodes_dir, backup_zip)
+        start_custom_nodes_backup_daemon(custom_nodes_dir, backup_archive)
 
     # 8. Cài đặt dependencies cho Custom Nodes & SeedVR2
     install_custom_nodes_requirements(custom_nodes_dir)
@@ -131,13 +133,16 @@ def launch_setup(
 def start_comfyui_and_tunnel(
     method="Colab-Proxy",
     port=8188,
-    pinggy_token="",
-    pinggy_server="Auto",
-    extra_args="--preview-method auto --listen --enable-cors-header",
+    tailscale_auth_key="",
+    tailscale_hostname=DEFAULT_TAILSCALE_HOSTNAME,
+    ssh_public_key="",
+    ssh_port=DEFAULT_SSH_PORT,
+    local_only_bind=True,
+    extra_args="--preview-method auto --enable-cors-header",
     comfyui_dir=DEFAULT_COMFYUI_DIR
 ):
     """
-    Kích hoạt TCMalloc, khởi chạy đường truyền Tunnel và ComfyUI Server với live logs.
+    Kích hoạt TCMalloc, khởi chạy đường truyền Tunnel (Colab-Proxy, SSH-Tailscale, Cloudflare) và ComfyUI Server.
     """
     global ACTIVE_DATA_DIR
     enable_tcmalloc()
@@ -152,8 +157,11 @@ def start_comfyui_and_tunnel(
     run_comfyui(
         method=method,
         port=port,
-        pinggy_token=pinggy_token,
-        pinggy_server=pinggy_server,
+        tailscale_auth_key=tailscale_auth_key,
+        tailscale_hostname=tailscale_hostname,
+        ssh_public_key=ssh_public_key,
+        ssh_port=ssh_port,
+        local_only_bind=local_only_bind,
         extra_args=extra_args,
         data_dir=active_dir,
         comfyui_dir=comfyui_dir

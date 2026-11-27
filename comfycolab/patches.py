@@ -14,14 +14,16 @@ def patch_user_manager(comfyui_dir=DEFAULT_COMFYUI_DIR):
 
     try:
         with open(um_path, "r", encoding="utf-8") as f:
-            content = f.read()
+            orig_content = f.read()
 
-        if "import urllib.parse" not in content:
-            content = "import urllib.parse\n" + content
-
+        content = orig_content
         if "_patched_smart_resolver" not in content:
+            if "import urllib.parse" not in content:
+                content = "import urllib.parse\n" + content
+
             patch_code = '''
     def _resolve_smart_user_file(self, full_user_dir, rel_file):
+        base_real = os.path.realpath(full_user_dir)
         candidates = [
             rel_file,
             urllib.parse.unquote(rel_file),
@@ -31,10 +33,19 @@ def patch_user_manager(comfyui_dir=DEFAULT_COMFYUI_DIR):
             rel_file.replace("%2B", "_").replace("+", "_").replace("%20", "_").replace(" ", "_"),
         ]
         for c in candidates:
-            p = os.path.join(full_user_dir, c)
-            if os.path.exists(p):
-                return p
-        return os.path.join(full_user_dir, urllib.parse.unquote(rel_file))
+            p = os.path.realpath(os.path.join(base_real, c))
+            try:
+                if os.path.commonpath([base_real, p]) == base_real and os.path.exists(p):
+                    return p
+            except ValueError:
+                continue
+        fallback = os.path.realpath(os.path.join(base_real, urllib.parse.unquote(rel_file)))
+        try:
+            if os.path.commonpath([base_real, fallback]) == base_real:
+                return fallback
+        except ValueError:
+            pass
+        return os.path.join(base_real, os.path.basename(rel_file))
 '''
             if "class UserManager:" in content:
                 content = content.replace("class UserManager:", "class UserManager:\n" + patch_code)
@@ -53,9 +64,10 @@ def patch_user_manager(comfyui_dir=DEFAULT_COMFYUI_DIR):
         content = content.replace('@routes.get("/userdata/{file}")', '@routes.get("/userdata/{file:.*}")')
         content = content.replace('@routes.get("/api/userdata/{file}")', '@routes.get("/api/userdata/{file:.*}")')
 
-        with open(um_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print("✅ Đã kích hoạt bản vá thông minh cho UserDataServer (Pixaroma & UI)!")
+        if content != orig_content:
+            with open(um_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("✅ Đã kích hoạt bản vá thông minh cho UserDataServer (Pixaroma & UI)!")
     except Exception as e:
         print(f"⚠️ Ghi chú user_manager patch: {e}")
 
@@ -81,30 +93,29 @@ def _universal_get_filename_list(folder_name):
             merged.update(_universal_media_cache["files"])
             return sorted(merged)
         in_d = get_input_directory()
-        out_d = get_output_directory()
         media_exts = {
             '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff',
             '.mp4', '.mkv', '.mov', '.avi', '.webm', '.gif',
             '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'
         }
         discovered = []
-        for d in [in_d, out_d]:
-            if d and os.path.exists(d):
-                scan_dirs = [d]
-                for sub in ("pixaroma", "3d", "outputs"):
-                    sp = os.path.join(d, sub)
-                    if os.path.isdir(sp):
-                        scan_dirs.append(sp)
-                for sd in scan_dirs:
-                    try:
-                        with os.scandir(sd) as it:
-                            for entry in it:
-                                if not entry.name.startswith('.') and entry.is_file():
-                                    ext = os.path.splitext(entry.name)[1].lower()
-                                    if ext in media_exts:
-                                        discovered.append(entry.name)
-                    except OSError:
-                        pass
+        if in_d and os.path.exists(in_d):
+            scan_dirs = [(in_d, "")]
+            for sub in ("pixaroma", "3d", "outputs"):
+                sp = os.path.join(in_d, sub)
+                if os.path.isdir(sp):
+                    scan_dirs.append((sp, sub))
+            for sd, prefix in scan_dirs:
+                try:
+                    with os.scandir(sd) as it:
+                        for entry in it:
+                            if not entry.name.startswith('.') and entry.is_file():
+                                ext = os.path.splitext(entry.name)[1].lower()
+                                if ext in media_exts:
+                                    rel = f"{prefix}/{entry.name}" if prefix else entry.name
+                                    discovered.append(rel)
+                except OSError:
+                    pass
         _universal_media_cache["ts"] = now
         _universal_media_cache["files"] = discovered
         file_list = list(set(file_list) | set(discovered))
@@ -118,16 +129,22 @@ def _universal_get_annotated_filepath(name, default_dir=None):
     res = _orig_get_annotated_filepath(name, default_dir)
     if os.path.isfile(res):
         return res
+    clean_name = name
+    for suffix in (" [input]", " [output]", " [temp]"):
+        if clean_name.endswith(suffix):
+            clean_name = clean_name[:-len(suffix)].strip()
+            break
+    base_name = os.path.basename(clean_name)
     in_d = get_input_directory()
     out_d = get_output_directory()
     for bdir in [in_d, out_d, default_dir]:
         if bdir and os.path.exists(bdir):
-            cand = os.path.join(bdir, name)
+            cand = os.path.join(bdir, clean_name)
             if os.path.isfile(cand):
                 return cand
             for root, _, files in os.walk(bdir, followlinks=True):
-                if name in files:
-                    return os.path.join(root, name)
+                if base_name in files:
+                    return os.path.join(root, base_name)
     return res
 get_annotated_filepath = _universal_get_annotated_filepath
 # _universal_multimedia_master_hook
@@ -178,13 +195,17 @@ def patch_vhs_loadvideo(custom_nodes_dir):
                 with open(vhs_nodes, "r", encoding="utf-8") as f:
                     vcontent = f.read()
                 if "_vhs_dynamic_patch" not in vcontent:
-                    vcontent = vcontent.replace(
-                        'files = [f for f in os.listdir(folder_paths.get_input_directory()) if os.path.isfile(os.path.join(folder_paths.get_input_directory(), f))]',
-                        '''import folder_paths\n        files = folder_paths.get_filename_list("input") # _vhs_dynamic_patch'''
-                    )
-                    with open(vhs_nodes, "w", encoding="utf-8") as f:
-                        f.write(vcontent)
-                    print("✅ Đã kích hoạt bộ nhận diện Video tức thì cho VHS_LoadVideo!")
+                    target = 'files = [f for f in os.listdir(folder_paths.get_input_directory()) if os.path.isfile(os.path.join(folder_paths.get_input_directory(), f))]'
+                    if target in vcontent:
+                        vcontent = vcontent.replace(
+                            target,
+                            '''import folder_paths\n        files = folder_paths.get_filename_list("input") # _vhs_dynamic_patch'''
+                        )
+                        with open(vhs_nodes, "w", encoding="utf-8") as f:
+                            f.write(vcontent)
+                        print("✅ Đã kích hoạt bộ nhận diện Video tức thì cho VHS_LoadVideo!")
+                    else:
+                        print("ℹ️ VHS_LoadVideo upstream đã thay đổi cấu trúc liệt kê tệp, bỏ qua patch tự động.")
         except Exception as e:
             print(f"⚠️ Ghi chú VHS_LoadVideo patch: {e}")
 
