@@ -85,53 +85,53 @@ def show_success_card(method, url):
 
 
 def show_ssh_tailscale_card(endpoint):
-    """Hiển thị hướng dẫn kết nối SSH-Tailscale thẳng về http://127.0.0.1:8188 trên máy cá nhân."""
+    """Hiển thị link mở thẳng ComfyUI qua Tailscale (0 lệnh ở máy cá nhân) kèm tùy chọn SSH."""
     host = endpoint.get("tailscale_ip") or endpoint.get("magic_dns") or endpoint.get("hostname")
     ssh_port = endpoint.get("ssh_port", DEFAULT_SSH_PORT)
     comfy_port = endpoint.get("comfy_port", 8188)
     ssh_user = endpoint.get("ssh_user", "root")
     magic_dns = endpoint.get("magic_dns", "")
     tailscale_ip = endpoint.get("tailscale_ip", "")
+    direct_url = endpoint.get("direct_url") or (f"https://{magic_dns}" if magic_dns else f"http://{host}:{comfy_port}")
+    serve_mode = endpoint.get("serve_mode", "https")
     ssh_cmd = endpoint.get("ssh_forward_cmd", "")
-    key_hint = endpoint.get("key_hint", "")
     local_url = endpoint.get("local_url", f"http://127.0.0.1:{comfy_port}")
 
     print("\n" + "=" * 68)
-    print("\033[92m🔐 CỔNG SSH-TAILSCALE ĐÃ SẴN SÀNG!\033[0m")
+    print("\033[92m🔐 TAILSCALE ĐÃ SẴN SÀNG — MỞ THẲNG TỪ MÁY CÁ NHÂN!\033[0m")
+    print(f"  • Mở thẳng trình duyệt (chỉ cần bật app Tailscale): \033[94m\033[4m{direct_url}\033[0m")
     if tailscale_ip:
         print(f"  • Tailscale IP  : {tailscale_ip}")
     if magic_dns:
         print(f"  • MagicDNS      : {magic_dns}")
-    print(f"  • Lệnh chạy trên máy cá nhân:\n    \033[96m{ssh_cmd}\033[0m")
-    print(f"  • Sau đó mở trình duyệt máy cá nhân tại: \033[94m\033[4m{local_url}\033[0m")
-    if key_hint:
-        print(f"  • Private Key tự sinh (chỉ cần tải 1 lần từ Drive): {key_hint}")
+    if serve_mode == "tcp":
+        print("  💡 Mẹo: Bật 'Enable HTTPS' trong Tailscale Admin -> DNS để có link https:// không cần số cổng.")
+    print(f"  • (Tùy chọn SSH nếu muốn mở qua {local_url}): {ssh_cmd}")
     print("=" * 68 + "\n")
 
-    key_note = (
-        f"<p style='color:#fbbf24;font-size:12.5px;margin:8px 0 0 0;'>🔑 Chưa có SSH Key riêng nên hệ thống đã tự tạo key tại Google Drive: <code>{key_hint}</code></p>"
-        if key_hint else ""
-    )
     html_content = f"""
-    <div style='background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid #38bdf8; padding: 20px; border-radius: 14px; margin-top: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 680px; color: #e2e8f0;'>
-      <div style='display:flex;align-items:center;margin-bottom:10px;'>
+    <div style='background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid #22c55e; padding: 22px; border-radius: 14px; margin-top: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 660px; color: #e2e8f0;'>
+      <div style='display:flex;align-items:center;margin-bottom:12px;'>
         <div style='background:#22c55e;width:12px;height:12px;border-radius:50%;margin-right:10px;box-shadow:0 0 10px #22c55e;'></div>
-        <h3 style='margin:0;color:#38bdf8;font-size:15.5px;text-transform:uppercase;'>SSH-Tailscale Tunnel (Colab ➔ Máy Cá Nhân)</h3>
+        <h3 style='margin:0;color:#22c55e;font-size:16px;text-transform:uppercase;'>Tailscale Direct Ready (Colab ➔ Máy Cá Nhân)</h3>
       </div>
-      <p style='margin:6px 0;font-size:13px;color:#cbd5e1;'>
-        <b>Tailscale IP:</b> <code>{tailscale_ip or 'N/A'}</code> &nbsp;|&nbsp;
-        <b>Host:</b> <code>{magic_dns or host}</code> &nbsp;|&nbsp;
-        <b>SSH Port:</b> <code>{ssh_port}</code> &nbsp;|&nbsp;
-        <b>User:</b> <code>{ssh_user}</code>
+      <p style='margin:0 0 14px 0;font-size:13.5px;color:#cbd5e1;line-height:1.5;'>
+        Chỉ cần bật app <b>Tailscale</b> trên máy cá nhân (không cần gõ lệnh hay chạy script) rồi bấm mở trực tiếp bên dưới:
       </p>
-      <div style='background:#020617;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin:10px 0;font-family:monospace;font-size:12.5px;color:#38bdf8;word-break:break-all;'>
-        {ssh_cmd}
+      <div style='margin-bottom:14px;'>
+        <a href='{direct_url}' target='_blank' style='display:inline-block;background:linear-gradient(90deg,#16a34a,#0ea5e9);color:white;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13.5px;box-shadow:0 4px 14px rgba(22,163,74,0.35);'>🚀 MỞ COMFYUI QUA TAILSCALE ({serve_mode.upper()})</a>
       </div>
-      <p style='margin:8px 0 0 0;font-size:13px;'>
-        Sau khi chạy lệnh trên (hoặc chạy <code>python scripts/local_connect.py</code>), mở thẳng trình duyệt máy cá nhân tại:
-        <a href='{local_url}' target='_blank' style='color:#22c55e;font-weight:700;'>{local_url}</a>
+      <p style='margin:6px 0;font-size:12.5px;color:#94a3b8;'>
+        <b>URL:</b> <code>{direct_url}</code> &nbsp;|&nbsp;
+        <b>IP:</b> <code>{tailscale_ip or 'N/A'}</code> &nbsp;|&nbsp;
+        <b>SSH:</b> <code>{ssh_user}@{tailscale_ip or magic_dns or host}:{ssh_port}</code>
       </p>
-      {key_note}
+      <details style='margin-top:10px;font-size:12px;color:#94a3b8;'>
+        <summary style='cursor:pointer;color:#38bdf8;'>Tùy chọn nâng cao: Forward về {local_url} hoặc VS Code Remote-SSH</summary>
+        <div style='background:#020617;border:1px solid #334155;border-radius:8px;padding:9px 11px;margin-top:8px;font-family:monospace;font-size:12px;color:#38bdf8;word-break:break-all;'>
+          {ssh_cmd}
+        </div>
+      </details>
     </div>
     """
     if HAS_IPYTHON and display and HTML:
@@ -345,7 +345,7 @@ def run_comfyui(
     ssh_endpoint = None
     use_local_only = False
 
-    if method == "SSH-Tailscale":
+    if method in ("Tailscale", "SSH-Tailscale"):
         try:
             ssh_endpoint = start_tailscale_ssh_tunnel(
                 data_dir=data_dir,
@@ -359,9 +359,18 @@ def run_comfyui(
             show_ssh_tailscale_card(ssh_endpoint)
             use_local_only = bool(local_only_bind)
         except Exception as e:
-            print(f"\033[93m⚠️ Không thể khởi tạo SSH-Tailscale ({e}). Tự động chuyển sang Cloudflare Tunnel...\033[0m")
-            method = "Cloudflare"
-            start_tunnel_service("Cloudflare", port)
+            print(f"\033[93m⚠️ Không thể khởi tạo Tailscale ({e}). Tự động thử Colab-Proxy / Cloudflare...\033[0m")
+            try:
+                from google.colab.output import eval_js
+                proxy_url = eval_js(f"google.colab.kernel.proxyPort({port})")
+                if proxy_url and isinstance(proxy_url, str) and proxy_url.startswith("http"):
+                    method = "Colab-Proxy"
+                    show_success_card("Colab-Proxy", proxy_url)
+                else:
+                    raise ValueError("URL proxy không hợp lệ")
+            except Exception:
+                method = "Cloudflare"
+                start_tunnel_service("Cloudflare", port)
     elif method == "Colab-Proxy":
         print("\n[Colab-Proxy] Đang kết nối trực tiếp qua Google Colab Proxy...")
         try:
@@ -450,10 +459,10 @@ def run_comfyui(
                 if proxy_url:
                     print(f"\n\033[92m🎉 ComfyUI ĐÃ KHỞI ĐỘNG XONG! Bấm vào đây để mở giao diện:\033[0m \033[94m\033[4m{proxy_url}\033[0m\n")
                 elif ssh_endpoint:
+                    direct_url = ssh_endpoint.get("direct_url", ssh_endpoint.get("local_url", ""))
                     print(
-                        f"\n\033[92m🎉 ComfyUI ĐÃ SẴN SÀNG CHO SSH-TAILSCALE!\033[0m\n"
-                        f"👉 Chạy trên máy cá nhân: \033[96m{ssh_endpoint['ssh_forward_cmd']}\033[0m\n"
-                        f"👉 Mở trình duyệt tại: \033[94m\033[4m{ssh_endpoint['local_url']}\033[0m\n"
+                        f"\n\033[92m🎉 ComfyUI ĐÃ KHỞI ĐỘNG XONG! Mở thẳng trên máy cá nhân qua Tailscale:\033[0m "
+                        f"\033[94m\033[4m{direct_url}\033[0m\n"
                     )
                 url_announced["done"] = True
 

@@ -34,51 +34,41 @@
 
 ## 🚀 Hướng Dẫn Khởi Chạy
 
-### 1. Khởi Chạy ComfyUI Chính
+### 1. Khởi Chạy ComfyUI Chính (1-Click)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nguyenducvuongg/ComfyUIonColab/blob/main/ComfyUI_Colab_Ultra.ipynb)
 
 1. Chọn môi trường GPU: **Runtime** ➔ **Change runtime type** ➔ **T4 GPU** (hoặc L4 / A100).
-2. Chạy **Bước 1**: Kết nối Google Drive, cài đặt môi trường và khôi phục Custom Nodes.
-3. Chạy **Bước 2**: Chọn `Tunnel_Method` (`Colab-Proxy`, `SSH-Tailscale`, hoặc `Cloudflare`) và khởi động ComfyUI.
+2. Bấm **Run duy nhất 1 lần** ở cell `🚀 Cài Đặt & Khởi Chạy ComfyUI (1-Click)`.
+3. Chờ hoàn tất và click thẳng vào link **Tailscale** (mặc định), **Colab-Proxy**, hoặc **Cloudflare** xuất hiện bên dưới.
 
 ### 2. Tải Mô Hình AI Tốc Độ Cao
 [![Open Model Downloader](https://img.shields.io/badge/Colab-Model_Downloader-orange?logo=google-colab)](https://colab.research.google.com/github/nguyenducvuongg/ComfyUIonColab/blob/main/ComfyUI_Model_Downloader.ipynb)
 
 ---
 
-## 🔐 Kết Nối SSH-Tailscale (Chạy Thẳng Về Máy Cá Nhân)
+## 🔐 Mở Thẳng ComfyUI Trên Máy Cá Nhân Qua Tailscale (0 Thao Tác Terminal)
 
-Chế độ **SSH-Tailscale** chạy ComfyUI trên GPU của Google Colab nhưng forward cổng thẳng về **`http://127.0.0.1:8188`** trên máy cá nhân (macOS / Windows / Linux) qua mạng riêng WireGuard:
-- **0đ, không cần mở port router, không cần tên miền riêng**.
+Chế độ mặc định **`Tailscale`** dùng `tailscaled` + `tailscale serve` kết hợp Google Drive:
+- **0đ, không cần mở port router, không cần tên miền riêng, không cần chạy script trên máy cá nhân**.
 - **Toàn bộ Models, Input, Output, Workflows vẫn đọc/ghi trực tiếp trên Google Drive** (`MyDrive/ComfyUI_Data/`).
-- **Bảo mật tuyệt đối**: Mặc định `Local_Only_Bind = True` khiến ComfyUI chỉ lắng nghe `127.0.0.1:8188` trên Colab và `sshd` chỉ chấp nhận SSH Key trên `127.0.0.1:2222`.
+- **Bảo mật mạng riêng WireGuard**: Chỉ các thiết bị trong Tailnet của bạn mới mở được ComfyUI.
 
 ### Thiết lập 1 lần duy nhất
-1. Cài app **Tailscale** trên máy cá nhân và đăng nhập tài khoản Tailscale.
-2. Vào [Tailscale Admin Console ➔ Settings ➔ Keys](https://login.tailscale.com/admin/settings/keys) tạo 1 **Auth Key** (bật **Reusable** + **Ephemeral**).
-3. Dán key đó vào **Colab Secrets** với tên `TAILSCALE_AUTHKEY` (khuyên dùng) hoặc nhập trực tiếp vào ô `Tailscale_Auth_Key` ở Bước 2 (hệ thống tự lưu lại vào Drive).
-4. *(Tùy chọn)* Dán nội dung file `~/.ssh/id_ed25519.pub` của máy bạn vào `SSH_Public_Key` hoặc Colab Secret `SSH_PUBLIC_KEY`. Nếu bỏ trống, hệ thống sẽ tự tạo cặp key `colab_ssh_key` trên Drive (`MyDrive/ComfyUI_Data/config/`).
+1. Cài app **Tailscale** trên máy cá nhân (macOS / Windows / Linux / điện thoại) và đăng nhập.
+2. Vào [Tailscale Admin Console ➔ Settings ➔ Keys](https://login.tailscale.com/admin/settings/keys) tạo 1 **Auth Key** (bật **Reusable** + **Ephemeral** + **Pre-approved**).
+3. *(Khuyên dùng để có URL `https://` sạch)* Vào **DNS** trên Tailscale Admin Console bật **MagicDNS** và **Enable HTTPS**.
+4. Dán Auth Key vào **Colab Secrets** (`🔑` bên trái Colab) với tên `TAILSCALE_AUTHKEY` và bật **Notebook access** ON.
 
-### Kết nối từ máy cá nhân
-Sau khi Bước 2 trên Colab báo **`CỔNG SSH-TAILSCALE ĐÃ SẴN SÀNG`**:
+### Sử dụng hằng ngày
+- Trên Colab: chỉ cần bấm **Run duy nhất 1 lần** ở [ComfyUI_Colab_Ultra.ipynb](ComfyUI_Colab_Ultra.ipynb).
+- Trên máy cá nhân (đang bật app Tailscale): click thẳng link **`https://colab-comfy.<tailnet>.ts.net`** (hoặc bookmark lại dùng mãi mãi). **Không cần gõ thêm bất kỳ lệnh nào trên máy cá nhân.**
 
-- **Cách 1 (Khuyên dùng — 1-click auto-reconnect + tự mở trình duyệt)**:
-  ```bash
-  python3 scripts/local_connect.py
-  ```
-  *Nếu muốn tự động kéo luôn ảnh/video vừa render từ Google Drive `output/` trên Colab về thư mục máy cá nhân:*
-  ```bash
-  python3 scripts/local_connect.py --sync-output ~/ComfyUI_Outputs
-  ```
-- **Cách 2 (Chạy lệnh SSH trực tiếp hiển thị trên cell Colab)**:
-  ```bash
-  ssh -N -L 127.0.0.1:8188:127.0.0.1:8188 -p 2222 root@<TAILSCALE_IP_OR_HOST>
-  ```
-- Sau đó mở trình duyệt trên máy cá nhân tại **`http://127.0.0.1:8188`**.
-- Để lấy cấu hình cho **VS Code / Antigravity / Cursor Remote-SSH**, chạy:
-  ```bash
-  python3 scripts/local_connect.py --print-ssh-config
-  ```
+*(Tùy chọn nâng cao)* Nếu bạn muốn dùng địa chỉ `http://127.0.0.1:8188`, VS Code / Antigravity Remote-SSH, hoặc kéo thêm bản sao từ `output/` về ổ cứng máy cá nhân:
+```bash
+python3 scripts/local_connect.py
+# Hoặc kéo thêm output về máy (mặc định tắt):
+python3 scripts/local_connect.py --sync-output ~/ComfyUI_Outputs
+```
 
 ---
 

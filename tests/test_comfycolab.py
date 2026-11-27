@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from comfycolab import cli
+from comfycolab import cli, launch_and_run
 from comfycolab.config import CONFIG_DIR, load_model_subfolders
 from comfycolab.custom_nodes import (
     _iter_backup_files,
@@ -23,8 +23,10 @@ from comfycolab.environment import filter_torch_requirements, get_pytorch_cuda_i
 from comfycolab.patches import patch_universal_multimedia_hook, patch_user_manager
 from comfycolab.ssh_tunnel import (
     build_sshd_config,
+    build_tailscale_serve_command,
     build_tailscale_up_command,
     build_tailscaled_command,
+    configure_tailscale_serve,
     resolve_ssh_keys,
     resolve_tailscale_auth_key,
     write_ssh_endpoint_info,
@@ -67,12 +69,16 @@ class TestConfigAndNotebooks(unittest.TestCase):
         self.assertEqual(len(lowered), len(set(lowered)))
 
     def test_notebooks_valid_json_python_and_no_pinggy(self):
-        for nb_name in ("ComfyUI_Colab_Ultra.ipynb", "ComfyUI_Model_Downloader.ipynb"):
+        expected_cells = {
+            "ComfyUI_Colab_Ultra.ipynb": 2,
+            "ComfyUI_Model_Downloader.ipynb": 3,
+        }
+        for nb_name, count in expected_cells.items():
             nb_path = os.path.join(REPO_ROOT, nb_name)
             with open(nb_path, "r", encoding="utf-8") as f:
                 raw_text = f.read()
                 nb = json.loads(raw_text)
-            self.assertEqual(len(nb.get("cells", [])), 3)
+            self.assertEqual(len(nb.get("cells", [])), count)
             self.assertNotIn("pinggy", raw_text.lower())
             for cell in nb["cells"]:
                 if cell.get("cell_type") == "code":
@@ -81,7 +87,9 @@ class TestConfigAndNotebooks(unittest.TestCase):
                     if cell.get("metadata", {}).get("id") == "download-cell":
                         self.assertIn("sys.path.insert", src)
         with open(os.path.join(REPO_ROOT, "ComfyUI_Colab_Ultra.ipynb"), "r", encoding="utf-8") as f:
-            self.assertIn("SSH-Tailscale", f.read())
+            ultra_raw = f.read()
+            self.assertIn("launch_and_run", ultra_raw)
+            self.assertIn("Tunnel_Method = \\\"Tailscale\\\"", ultra_raw)
 
     def test_no_pinggy_in_tunnel_modules(self):
         import comfycolab.tunnel as tunnel_mod
@@ -377,6 +385,33 @@ class TestSSHTailscaleAndLocalConnect(unittest.TestCase):
             ],
         )
 
+        serve_https = build_tailscale_serve_command("/tmp/ts.sock", comfy_port=8188, https=True)
+        self.assertEqual(serve_https, ["tailscale", "--socket=/tmp/ts.sock", "serve", "--bg", "8188"])
+        serve_http = build_tailscale_serve_command("/tmp/ts.sock", comfy_port=8188, https=False)
+        self.assertEqual(serve_http, ["tailscale", "--socket=/tmp/ts.sock", "serve", "--http=80", "--bg", "8188"])
+
+    def test_configure_tailscale_serve_https_and_fallback(self):
+        class Res:
+            def __init__(self, rc):
+                self.returncode = rc
+                self.stdout = ""
+                self.stderr = ""
+
+        # Case 1: HTTPS serve thành công
+        with patch("comfycolab.ssh_tunnel.subprocess.run", side_effect=[Res(0), Res(0)]):
+            url, mode = configure_tailscale_serve("/tmp/ts.sock", 8188, magic_dns="colab-comfy.tailnet.ts.net", tailscale_ip="100.64.0.10")
+        self.assertEqual((url, mode), ("https://colab-comfy.tailnet.ts.net", "https"))
+
+        # Case 2: HTTPS thất bại -> fallback HTTP port 80
+        with patch("comfycolab.ssh_tunnel.subprocess.run", side_effect=[Res(0), Res(1), Res(0)]):
+            url, mode = configure_tailscale_serve("/tmp/ts.sock", 8188, magic_dns="colab-comfy.tailnet.ts.net", tailscale_ip="100.64.0.10")
+        self.assertEqual((url, mode), ("http://colab-comfy.tailnet.ts.net", "http"))
+
+        # Case 3: Cả HTTPS & HTTP đều lỗi -> fallback TCP :8188
+        with patch("comfycolab.ssh_tunnel.subprocess.run", side_effect=[Res(0), Res(1), Res(1)]):
+            url, mode = configure_tailscale_serve("/tmp/ts.sock", 8188, magic_dns="colab-comfy.tailnet.ts.net", tailscale_ip="100.64.0.10")
+        self.assertEqual((url, mode), ("http://100.64.0.10:8188", "tcp"))
+
     def test_resolve_tailscale_auth_key_and_ssh_keys(self):
         tmp_dir = tempfile.mkdtemp(prefix="comfycolab_ssh_")
         try:
@@ -407,8 +442,12 @@ class TestSSHTailscaleAndLocalConnect(unittest.TestCase):
                 magic_dns="colab-comfy.tailnet.ts.net",
                 ssh_port=2222,
                 comfy_port=8188,
+                direct_url="https://colab-comfy.tailnet.ts.net",
+                serve_mode="https",
             )
             self.assertTrue(os.path.isfile(ep_path))
+            self.assertEqual(payload["direct_url"], "https://colab-comfy.tailnet.ts.net")
+            self.assertEqual(payload["serve_mode"], "https")
             self.assertEqual(payload["local_url"], "http://127.0.0.1:8188")
             self.assertIn("-L 127.0.0.1:8188:127.0.0.1:8188", payload["ssh_forward_cmd"])
         finally:
@@ -468,6 +507,16 @@ class TestSSHTailscaleAndLocalConnect(unittest.TestCase):
         doctor_data = json.loads(buf.getvalue())
         self.assertIn("tools", doctor_data)
         self.assertIn("cuda_index_url", doctor_data)
+
+    def test_launch_and_run_calls_setup_then_start(self):
+        calls = []
+        with patch("comfycolab.launch_setup", side_effect=lambda **kw: calls.append(("setup", kw))), \
+             patch("comfycolab.start_comfyui_and_tunnel", side_effect=lambda **kw: calls.append(("start", kw))):
+            launch_and_run(drive_path="/tmp/d", method="Tailscale", port=8188, tailscale_auth_key="tskey-123")
+        self.assertEqual([c[0] for c in calls], ["setup", "start"])
+        self.assertEqual(calls[0][1]["drive_path"], "/tmp/d")
+        self.assertEqual(calls[1][1]["method"], "Tailscale")
+        self.assertEqual(calls[1][1]["tailscale_auth_key"], "tskey-123")
 
 
 if __name__ == "__main__":

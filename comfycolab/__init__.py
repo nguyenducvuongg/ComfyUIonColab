@@ -167,6 +167,46 @@ def start_comfyui_and_tunnel(
         comfyui_dir=comfyui_dir
     )
 
+
+def launch_and_run(
+    connect_drive=True,
+    drive_path=DEFAULT_DRIVE_DATA_DIR,
+    use_backup=True,
+    update_nodes=True,
+    install_video_nodes=True,
+    force_reinstall=False,
+    method="Tailscale",
+    port=8188,
+    tailscale_auth_key="",
+    tailscale_hostname=DEFAULT_TAILSCALE_HOSTNAME,
+    ssh_public_key="",
+    ssh_port=DEFAULT_SSH_PORT,
+    local_only_bind=True,
+    extra_args="--preview-method auto --enable-cors-header",
+    comfyui_dir=DEFAULT_COMFYUI_DIR,
+):
+    """Hàm 1-click gộp toàn bộ bước cài đặt môi trường và khởi chạy ComfyUI + đường truyền."""
+    launch_setup(
+        connect_drive=connect_drive,
+        drive_path=drive_path,
+        use_backup=use_backup,
+        update_nodes=update_nodes,
+        install_video_nodes=install_video_nodes,
+        force_reinstall=force_reinstall,
+        comfyui_dir=comfyui_dir,
+    )
+    start_comfyui_and_tunnel(
+        method=method,
+        port=port,
+        tailscale_auth_key=tailscale_auth_key,
+        tailscale_hostname=tailscale_hostname,
+        ssh_public_key=ssh_public_key,
+        ssh_port=ssh_port,
+        local_only_bind=local_only_bind,
+        extra_args=extra_args,
+        comfyui_dir=comfyui_dir,
+    )
+
 def setup_downloader_env(drive_path=DEFAULT_DRIVE_DATA_DIR):
     """Thiết lập môi trường cho ComfyUI Model Downloader."""
     setup_timezone()

@@ -373,6 +373,59 @@ def build_tailscale_up_command(socket_path, auth_key, hostname=DEFAULT_TAILSCALE
     return cmd
 
 
+def build_tailscale_serve_command(socket_path, comfy_port=8188, https=True):
+    """Tạo lệnh tailscale serve --bg để mở thẳng ComfyUI qua URL Tailscale (không cần chạy SSH ở PC)."""
+    cmd = ["tailscale", f"--socket={socket_path}", "serve"]
+    if not https:
+        cmd.append("--http=80")
+    cmd.extend(["--bg", str(int(comfy_port))])
+    return cmd
+
+
+def configure_tailscale_serve(socket_path, comfy_port=8188, magic_dns="", tailscale_ip=""):
+    """
+    Cấu hình Tailscale Serve để trình duyệt máy cá nhân mở thẳng ComfyUI:
+    1. Ưu tiên HTTPS Serve (https://<magic_dns>) — WebSocket mượt, chứng chỉ TLS tự động.
+    2. Fallback HTTP Serve cổng 80 (http://<magic_dns> hoặc http://<tailscale_ip>) nếu Tailnet chưa bật HTTPS.
+    3. Fallback TCP trực tiếp (http://<tailscale_ip>:<comfy_port>).
+    Trả về (direct_url, serve_mode).
+    """
+    subprocess.run(
+        ["tailscale", f"--socket={socket_path}", "serve", "reset"],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+    host_dns = (magic_dns or "").rstrip(".")
+    host_ip = (tailscale_ip or "").strip()
+
+    if host_dns:
+        https_res = subprocess.run(
+            build_tailscale_serve_command(socket_path, comfy_port=comfy_port, https=True),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if https_res.returncode == 0:
+            return f"https://{host_dns}", "https"
+
+    http_res = subprocess.run(
+        build_tailscale_serve_command(socket_path, comfy_port=comfy_port, https=False),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if http_res.returncode == 0 and (host_dns or host_ip):
+        target = host_dns or host_ip
+        return f"http://{target}", "http"
+
+    fallback_target = host_ip or host_dns or DEFAULT_TAILSCALE_HOSTNAME
+    return f"http://{fallback_target}:{int(comfy_port)}", "tcp"
+
+
 def _start_sshd_process(sshd_bin, config_path):
     os.makedirs("/run/sshd", mode=0o755, exist_ok=True)
     log_path = os.path.join(tempfile.gettempdir(), "comfycolab_sshd.log")
@@ -412,18 +465,23 @@ def write_ssh_endpoint_info(
     comfy_port=8188,
     ssh_user="root",
     key_hint="",
+    direct_url="",
+    serve_mode="",
 ):
-    """Ghi thông tin kết nối SSH-Tailscale mới nhất vào Drive để client local tự đọc."""
+    """Ghi thông tin kết nối Tailscale Direct + SSH mới nhất vào Drive."""
     target_host = tailscale_ip or magic_dns or hostname
+    resolved_direct_url = direct_url or (f"https://{magic_dns}" if magic_dns else f"http://{target_host}:{int(comfy_port)}")
     forward_cmd = f"ssh -N -L 127.0.0.1:{comfy_port}:127.0.0.1:{comfy_port} -p {ssh_port} {ssh_user}@{target_host}"
     if key_hint:
         forward_cmd = f"ssh -i \"{key_hint}\" -N -L 127.0.0.1:{comfy_port}:127.0.0.1:{comfy_port} -p {ssh_port} {ssh_user}@{target_host}"
 
     payload = {
-        "method": "SSH-Tailscale",
+        "method": "Tailscale",
         "hostname": hostname,
         "magic_dns": magic_dns,
         "tailscale_ip": tailscale_ip,
+        "direct_url": resolved_direct_url,
+        "serve_mode": serve_mode or ("https" if resolved_direct_url.startswith("https://") else "http"),
         "ssh_user": ssh_user,
         "ssh_port": int(ssh_port),
         "comfy_port": int(comfy_port),
@@ -557,6 +615,14 @@ def start_tailscale_ssh_tunnel(
         except Exception:
             pass
 
+    direct_url, serve_mode = configure_tailscale_serve(
+        ts_sock,
+        comfy_port=comfy_port,
+        magic_dns=magic_dns,
+        tailscale_ip=tailscale_ip,
+    )
+    print(f"  🌐 [Tailscale] URL mở thẳng trên máy cá nhân ({serve_mode.upper()}): {direct_url}")
+
     ssh_user = getpass.getuser() or "root"
     key_hint = auto_priv_key or ""
     endpoint_path, payload = write_ssh_endpoint_info(
@@ -568,6 +634,8 @@ def start_tailscale_ssh_tunnel(
         comfy_port=comfy_port,
         ssh_user=ssh_user,
         key_hint=key_hint,
+        direct_url=direct_url,
+        serve_mode=serve_mode,
     )
 
     # Watchdog giữ sshd & tailscaled luôn sống suốt phiên Colab
@@ -591,6 +659,12 @@ def start_tailscale_ssh_tunnel(
                             capture_output=True,
                             timeout=25,
                             check=False,
+                        )
+                        configure_tailscale_serve(
+                            ts_sock,
+                            comfy_port=comfy_port,
+                            magic_dns=magic_dns,
+                            tailscale_ip=tailscale_ip,
                         )
                 except Exception:
                     pass
