@@ -48,9 +48,10 @@ class TestConfigAndNotebooks(unittest.TestCase):
         data = load_default_nodes()
         self.assertIn("core_nodes", data)
         self.assertIn("video_nodes", data)
-        self.assertEqual(len(data["core_nodes"]), 18)
+        self.assertEqual(len(data["core_nodes"]), 17)
         self.assertEqual(len(data["video_nodes"]), 4)
         node_map = {n["name"]: n["url"] for n in data["core_nodes"]}
+        self.assertNotIn("ComfyUI-Custom-Scripts", node_map)
         self.assertEqual(
             node_map["ComfyUI-Inspyrenet-Rembg"],
             "https://github.com/john-mnz/ComfyUI-Inspyrenet-Rembg.git",
@@ -59,6 +60,23 @@ class TestConfigAndNotebooks(unittest.TestCase):
             node_map["ComfyUI-Pixaroma"],
             "https://github.com/pixaroma/comfyui-pixaroma.git",
         )
+
+    def test_deprecated_custom_scripts_cleaned_up_on_setup(self):
+        from comfycolab.custom_nodes import setup_all_custom_nodes
+        tmp_dir = tempfile.mkdtemp(prefix="comfycolab_rm_cs_")
+        try:
+            old_node = os.path.join(tmp_dir, "ComfyUI-Custom-Scripts")
+            os.makedirs(old_node, exist_ok=True)
+            with open(os.path.join(old_node, "__init__.py"), "w", encoding="utf-8") as f:
+                f.write("# legacy\n")
+            with patch("comfycolab.custom_nodes.load_default_nodes", return_value={"core_nodes": [], "video_nodes": []}), \
+                 patch("comfycolab.custom_nodes.ensure_pixaroma_latest", return_value=False), \
+                 patch("comfycolab.custom_nodes.patch_vhs_loadvideo"):
+                changed = setup_all_custom_nodes(tmp_dir, update_nodes=False, install_video_nodes=False)
+            self.assertTrue(changed)
+            self.assertFalse(os.path.exists(old_node))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_model_folders_json_count_and_no_case_duplicates(self):
         folders = load_model_subfolders()
@@ -117,7 +135,7 @@ class TestStorageAndSymlinks(unittest.TestCase):
         os.makedirs(os.path.join(self.comfy_dir, "input"), exist_ok=True)
 
         healed = validate_and_heal_symlinks(self.data_dir, self.comfy_dir)
-        self.assertGreaterEqual(healed, 42)
+        self.assertGreaterEqual(healed, len(load_model_subfolders()) + 4)
         self.assertTrue(os.path.islink(os.path.join(models_dir, "seedvr2")))
         healed_second = validate_and_heal_symlinks(self.data_dir, self.comfy_dir)
         self.assertEqual(healed_second, 0)

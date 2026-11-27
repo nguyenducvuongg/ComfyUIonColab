@@ -224,7 +224,6 @@ def validate_and_heal_symlinks(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFA
         (os.path.join(comfyui_dir, "output"), os.path.join(data_dir, "output")),
         (os.path.join(comfyui_dir, "user"), drive_user),
         (os.path.join(comfyui_dir, "workflows"), drive_wf),
-        (os.path.join(comfyui_dir, "pysssss-workflows"), drive_wf),
     ])
 
     for colab_path, drive_path in link_pairs:
@@ -262,11 +261,10 @@ def setup_user_and_workflows(data_dir=DEFAULT_DRIVE_DATA_DIR, comfyui_dir=DEFAUL
     print("✅ Đã kết nối: ComfyUI/user <-> Drive/user (Đồng bộ toàn bộ Workflow của bạn trên Drive)")
 
     # Alias links
-    for al in [os.path.join(comfyui_dir, "workflows"), os.path.join(comfyui_dir, "pysssss-workflows")]:
-        try:
-            _ensure_symlink(al, drive_default_workflows, ensure_target_dir=False)
-        except Exception:
-            pass
+    try:
+        _ensure_symlink(os.path.join(comfyui_dir, "workflows"), drive_default_workflows, ensure_target_dir=False)
+    except Exception:
+        pass
 
     # Cấu hình ngôn ngữ English mặc định
     settings_dir = os.path.join(drive_user_dir, "default")

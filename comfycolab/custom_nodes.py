@@ -45,7 +45,6 @@ def load_default_nodes():
         "core_nodes": [
             {"name": "ComfyUI-Manager", "url": "https://github.com/ltdrdata/ComfyUI-Manager.git"},
             {"name": "ComfyUI-Impact-Pack", "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"},
-            {"name": "ComfyUI-Custom-Scripts", "url": "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"},
             {"name": "ComfyUI-Crystools", "url": "https://github.com/crystian/ComfyUI-Crystools.git"},
             {"name": "ComfyUI-Pixaroma", "url": "https://github.com/pixaroma/comfyui-pixaroma.git"},
             {"name": "rgthree-comfy", "url": "https://github.com/rgthree/rgthree-comfy.git"},
@@ -431,18 +430,20 @@ def setup_all_custom_nodes(
     if install_video_nodes:
         all_target_nodes.extend(video_nodes)
 
-    old_cs = os.path.join(custom_nodes_dir, "comfyui-custom-scripts")
-    new_cs = os.path.join(custom_nodes_dir, "ComfyUI-Custom-Scripts")
-    if os.path.exists(old_cs) and not os.path.exists(new_cs):
-        try:
-            shutil.move(old_cs, new_cs)
-        except Exception:
-            pass
+    has_any_new = False
+    for deprecated_cs in ("ComfyUI-Custom-Scripts", "comfyui-custom-scripts"):
+        cs_path = os.path.join(custom_nodes_dir, deprecated_cs)
+        if os.path.exists(cs_path):
+            try:
+                shutil.rmtree(cs_path)
+                has_any_new = True
+                print(f"  🧹 Đã gỡ bỏ node cũ '{deprecated_cs}' (khỏi khôi phục từ backup).")
+            except Exception:
+                pass
 
     total = len(all_target_nodes)
     print(f"\n[6/10] 🧩 Kiểm tra và đồng bộ song song {total} Custom Nodes chính thống...")
 
-    has_any_new = False
     other_nodes = [(i, node) for i, node in enumerate(all_target_nodes, 1) if node["name"] != "ComfyUI-Pixaroma"]
     with ThreadPoolExecutor(max_workers=6) as executor:
         futures = [
